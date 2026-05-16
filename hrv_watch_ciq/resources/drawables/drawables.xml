@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<drawables>
+  <!-- Il launcher icon va fornito come file PNG 28x28 (oppure 40x40
+       per device ad alta risoluzione). Placeholder qui: sostituire
+       con l'icona reale prima del deploy. -->
+  <bitmap id="LauncherIcon" filename="launcher_icon.png"/>
+</drawables>

@@ -1,0 +1,61 @@
+name: hrv_trainer
+description: "HRV biofeedback training app (Android-only) with Garmin Instinct Solar 2X integration via Connect IQ"
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.11.1
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # State management
+  flutter_riverpod: ^2.6.1
+
+  # Navigation
+  go_router: ^14.8.1
+
+  # Persistence
+  sqflite: ^2.4.1
+  path_provider: ^2.1.5
+  path: ^1.9.0
+  shared_preferences: ^2.3.4
+
+  # Charts
+  fl_chart: ^0.70.2
+
+  # Feedback
+  vibration: ^2.0.1
+  audioplayers: ^6.1.0
+
+  # Permissions
+  permission_handler: ^11.3.1
+
+  # Utilities
+  intl: ^0.20.1
+  collection: ^1.18.0
+
+  # BLE fallback (quando Connect IQ non è disponibile)
+  flutter_blue_plus: ^1.34.5
+
+  # Tiene lo schermo acceso durante la sessione di training
+  wakelock_plus: ^1.2.10
+
+  # Backup manuale dello storico: export via share sheet (Drive/email),
+  # import da file picker. Aggiunti dopo l'incidente del 2026-05-10
+  # in cui un install non corretto ha cancellato il DB sqflite e ho
+  # imparato a non fidarmi solo di Auto Backup di Google.
+  share_plus: ^10.1.2
+  file_picker: ^8.1.7
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/sounds/

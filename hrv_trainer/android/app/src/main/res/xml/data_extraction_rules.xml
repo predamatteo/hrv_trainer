@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12+ Data Extraction Rules.
+  Vedi nota in backup_rules.xml: il DB sqflite è in app_flutter/, dominio "file".
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <include domain="file" path="app_flutter/"/>
+        <!-- L'<exclude> richiede un <include> dello stesso dominio (lint
+             FullBackupContent). Vedi nota in backup_rules.xml. -->
+        <include domain="sharedpref" path="."/>
+        <exclude domain="sharedpref" path="FlutterSharedPreferences.xml"/>
+    </cloud-backup>
+    <device-transfer>
+        <include domain="file" path="app_flutter/"/>
+        <include domain="sharedpref" path="."/>
+        <exclude domain="sharedpref" path="FlutterSharedPreferences.xml"/>
+    </device-transfer>
+</data-extraction-rules>

@@ -1,0 +1,8 @@
+# Jungle file per HRV Trainer CIQ app.
+# Vedi https://developer.garmin.com/connect-iq/monkey-c/build-configuration/
+
+project.manifest = manifest.xml
+
+# Qualifier di default (tutti i device nel manifest).
+base.sourcePath = source
+base.resourcePath = resources

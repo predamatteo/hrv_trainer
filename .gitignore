@@ -1,0 +1,58 @@
+# === Flutter / Dart ===
+hrv_trainer/.dart_tool/
+hrv_trainer/.flutter-plugins
+hrv_trainer/.flutter-plugins-dependencies
+hrv_trainer/.packages
+hrv_trainer/.pub-cache/
+hrv_trainer/.pub/
+hrv_trainer/build/
+hrv_trainer/pubspec.lock.user
+hrv_trainer/.idea/
+hrv_trainer/*.iml
+
+# === Android ===
+hrv_trainer/android/.gradle/
+hrv_trainer/android/captures/
+hrv_trainer/android/local.properties
+hrv_trainer/android/GeneratedPluginRegistrant.java
+hrv_trainer/android/app/build/
+
+# Signing: MAI committare credenziali o keystore
+hrv_trainer/android/key.properties
+hrv_trainer/android/keystore/*.jks
+hrv_trainer/android/keystore/*.keystore
+
+# Connect IQ Mobile SDK: licenza proprietaria Garmin - NON ridistribuire.
+# L'utente deve scaricarlo autonomamente da developer.garmin.com.
+hrv_trainer/android/app/libs/*.aar
+hrv_trainer/android/app/libs/*.jar
+
+# === Connect IQ (Monkey C) ===
+hrv_watch_ciq/build/
+hrv_watch_ciq/bin/
+hrv_watch_ciq/.jungle_cache
+hrv_watch_ciq/keys/*.der
+hrv_watch_ciq/keys/*.pem
+
+# === Connect IQ Mobile SDK estratto ===
+# Licenza proprietaria Garmin: fuori dal repo.
+connectiq-android-sdk-main/
+
+# === Tools / Python ===
+tools/__pycache__/
+tools/.venv/
+*.pyc
+
+# === OS / editor ===
+.DS_Store
+Thumbs.db
+.vscode/
+*.swp
+*.swo
+
+# === Claude Code (impostazioni locali sviluppo) ===
+.claude/
+
+# === Documenti privati di riferimento (non ridistribuibili) ===
+HRV Training_ Guida Dettagliata.md
+
