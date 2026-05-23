@@ -49,9 +49,9 @@ class _AssessmentScreenState extends ConsumerState<AssessmentScreen>
             'decrescenti: 6.5 → 6.0 → 5.5 → 5.0 → 4.5 respiri/min.\n\n'
             'Segui il cerchio che si espande (inspira) e si contrae (espira) '
             'in modo fluido, addominale, senza pause. Non forzare la profondità.\n\n'
-            'Al termine l\'app individuerà la tua frequenza di risonanza personale '
-            'in base al miglior compromesso tra ampiezza HRV, picco spettrale e '
-            'sincronia con il respiro.',
+            'Al termine l\'app individuerà la tua frequenza di risonanza personale: '
+            'quella in cui l\'oscillazione del battito guidata dal respiro (RSA) '
+            'raggiunge l\'ampiezza massima.',
           ),
           const Spacer(),
           FilledButton.icon(
@@ -158,8 +158,8 @@ class _AssessmentScreenState extends ConsumerState<AssessmentScreen>
                 child: ListTile(
                   title: Text('${s.bpm.toStringAsFixed(1)} bpm'),
                   subtitle: Text(
+                    'RSA ${s.metrics.peakToTroughMs.toStringAsFixed(0)} ms p-v • '
                     'SDNN ${s.metrics.sdnnMs.toStringAsFixed(0)} ms • '
-                    'RMSSD ${s.metrics.rmssdMs.toStringAsFixed(0)} ms • '
                     'LF peak ${s.metrics.lfPeakHz.toStringAsFixed(3)} Hz',
                   ),
                   trailing: s.bpm == r.resonanceBpm

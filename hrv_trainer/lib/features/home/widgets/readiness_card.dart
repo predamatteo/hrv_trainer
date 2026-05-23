@@ -40,6 +40,16 @@ class _CardShell extends StatelessWidget {
   Widget build(BuildContext context) => Card(child: child);
 }
 
+/// Colore della riga CV: neutro quando stabile, ambra/rosso al crescere
+/// dell'instabilità. Volutamente sobrio per non competere col semaforo
+/// principale della banda di readiness.
+Color _cvColor(ThemeData theme, CvStability s) => switch (s) {
+      CvStability.stable => theme.colorScheme.onSurfaceVariant,
+      CvStability.moderate => Colors.orange.shade700,
+      CvStability.unstable => theme.colorScheme.error,
+      CvStability.unknown => theme.colorScheme.onSurfaceVariant,
+    };
+
 class _ReadinessBody extends StatelessWidget {
   final Readiness readiness;
   final VoidCallback? onStartMorning;
@@ -104,6 +114,21 @@ class _ReadinessBody extends StatelessWidget {
                 '(${readiness.baselineDays} gg)',
                 style: theme.textTheme.labelSmall,
               ),
+            if (readiness.cvPct != null) ...[
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Icon(Icons.show_chart, size: 13, color: _cvColor(theme, readiness.cvStability)),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Stabilità 7gg • CV ${readiness.cvPct!.toStringAsFixed(1)}% '
+                    '(${readiness.cvLabel})',
+                    style: theme.textTheme.labelSmall
+                        ?.copyWith(color: _cvColor(theme, readiness.cvStability)),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       ),

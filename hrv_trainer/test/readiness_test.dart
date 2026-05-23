@@ -91,4 +91,57 @@ void main() {
       expect(r.direction, AutonomicDirection.parasympatheticLow);
     });
   });
+
+  group('CV(lnRMSSD)', () {
+    test('serie stabile → CV basso, stabilità "stable"', () {
+      final now = DateTime(2026, 4, 22);
+      final flat = [40, 41, 40, 42, 40, 41, 40];
+      final hist = <Session>[
+        for (var i = 0; i < flat.length; i++)
+          _morning(now.subtract(Duration(days: i)), flat[i].toDouble(), 60),
+      ];
+      final r = ReadinessCalculator.fromHistory(hist);
+      expect(r.cvPct, isNotNull);
+      expect(r.cvPct!, lessThan(5));
+      expect(r.cvStability, CvStability.stable);
+    });
+
+    test('serie molto oscillante → CV alto, stabilità "unstable"', () {
+      final now = DateTime(2026, 4, 22);
+      final swing = [80, 20, 75, 22, 70, 25, 78];
+      final hist = <Session>[
+        for (var i = 0; i < swing.length; i++)
+          _morning(now.subtract(Duration(days: i)), swing[i].toDouble(), 60),
+      ];
+      final r = ReadinessCalculator.fromHistory(hist);
+      expect(r.cvPct, isNotNull);
+      expect(r.cvPct!, greaterThan(10));
+      expect(r.cvStability, CvStability.unstable);
+    });
+
+    test('CV disponibile già con 3 letture, prima della readiness piena', () {
+      final now = DateTime(2026, 4, 22);
+      final hist = <Session>[
+        _morning(now, 40, 60),
+        _morning(now.subtract(const Duration(days: 1)), 44, 60),
+        _morning(now.subtract(const Duration(days: 2)), 42, 60),
+      ];
+      final r = ReadinessCalculator.fromHistory(hist);
+      // baseline (2 letture) insufficiente → banda unknown...
+      expect(r.band, ReadinessBand.unknown);
+      // ...ma il CV è già calcolabile sulle 3 letture.
+      expect(r.cvPct, isNotNull);
+    });
+
+    test('nessun CV con meno di 3 letture', () {
+      final now = DateTime(2026, 4, 22);
+      final hist = <Session>[
+        _morning(now, 40, 60),
+        _morning(now.subtract(const Duration(days: 1)), 42, 60),
+      ];
+      final r = ReadinessCalculator.fromHistory(hist);
+      expect(r.cvPct, isNull);
+      expect(r.cvStability, CvStability.unknown);
+    });
+  });
 }

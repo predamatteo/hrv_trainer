@@ -22,6 +22,13 @@ enum ReadinessBand { unknown, green, yellow, red }
 
 enum AutonomicDirection { balanced, parasympatheticLow, sympatheticHigh }
 
+/// Stabilità della serie HRV recente, derivata dal Coefficiente di Variazione
+/// del lnRMSSD sulla finestra rolling. Un CV crescente segnala instabilità
+/// omeostatica (la traiettoria perde affidabilità prima ancora che la media
+/// crolli): nello studio post-concussione un CV passato da ~3% a ~6% ha
+/// anticipato la disfunzione autonomica. Soglie indicative, non diagnostiche.
+enum CvStability { unknown, stable, moderate, unstable }
+
 class Readiness {
   final ReadinessBand band;
   final AutonomicDirection direction;
@@ -33,6 +40,10 @@ class Readiness {
   final String headline;
   final String message;
 
+  /// Coefficiente di Variazione del lnRMSSD (%) sulla finestra rolling più
+  /// recente (oggi incluso). `null` finché non ci sono ≥3 letture valide.
+  final double? cvPct;
+
   const Readiness({
     required this.band,
     required this.direction,
@@ -43,7 +54,26 @@ class Readiness {
     required this.baselineDays,
     required this.headline,
     required this.message,
+    this.cvPct,
   });
+
+  /// Classifica il CV in fasce di stabilità. Soglie: <5% stabile (range tipico
+  /// settimanale del lnRMSSD in soggetti sani), 5-10% oscillante, ≥10%
+  /// instabile. Indicative: il segnale forte è il *trend* del CV nel tempo.
+  CvStability get cvStability {
+    final c = cvPct;
+    if (c == null) return CvStability.unknown;
+    if (c < 5) return CvStability.stable;
+    if (c < 10) return CvStability.moderate;
+    return CvStability.unstable;
+  }
+
+  String get cvLabel => switch (cvStability) {
+        CvStability.stable => 'stabile',
+        CvStability.moderate => 'oscillante',
+        CvStability.unstable => 'instabile',
+        CvStability.unknown => '—',
+      };
 
   static const unknown = Readiness(
     band: ReadinessBand.unknown,
@@ -76,6 +106,11 @@ class ReadinessCalculator {
         .toList();
     if (mornings.isEmpty) return Readiness.unknown;
 
+    // CV(lnRMSSD) sulla finestra più recente, oggi incluso: è una misura di
+    // dispersione della serie recente (instabilità), distinta dal confronto
+    // oggi-vs-baseline che guida la banda. Disponibile già con 3 letture.
+    final cvPct = _cvLnRmssd(mornings.take(windowDays));
+
     final today = mornings.first;
     final baseline = mornings.skip(1).take(windowDays).toList();
     if (baseline.length < minBaselineDays) {
@@ -90,6 +125,7 @@ class ReadinessCalculator {
         headline: 'Baseline in costruzione (${baseline.length}/$minBaselineDays)',
         message: 'Ancora ${minBaselineDays - baseline.length} Morning reading '
             'per iniziare a calcolare readiness.',
+        cvPct: cvPct,
       );
     }
 
@@ -130,7 +166,33 @@ class ReadinessCalculator {
       baselineDays: baseline.length,
       headline: _headline(band, direction),
       message: _message(band, direction, z, meanRmssd, today.metrics.rmssdMs),
+      cvPct: cvPct,
     );
+  }
+
+  /// Coefficiente di Variazione del lnRMSSD (%) sulla finestra: SD/|media|·100.
+  ///
+  /// Si lavora sul lnRMSSD (non sull'RMSSD grezzo) perché è la scala su cui la
+  /// letteratura riporta il CV dell'HRV quotidiano: la trasformazione log
+  /// comprime la forte asimmetria dell'RMSSD e rende i valori di CV
+  /// confrontabili tra individui (tipico settimanale ~3-7%). Richiede ≥3
+  /// letture valide (RMSSD > 0). SD campionaria (n-1) per coerenza col resto
+  /// del modulo.
+  static double? _cvLnRmssd(Iterable<Session> window) {
+    final ln = window
+        .map((s) => s.metrics.rmssdMs)
+        .where((r) => r > 0)
+        .map(math.log)
+        .toList(growable: false);
+    if (ln.length < 3) return null;
+    final mean = ln.reduce((a, b) => a + b) / ln.length;
+    if (mean == 0) return null;
+    final variance = ln
+            .map((x) => (x - mean) * (x - mean))
+            .reduce((a, b) => a + b) /
+        (ln.length - 1);
+    final sd = math.sqrt(variance);
+    return (sd / mean.abs()) * 100.0;
   }
 
   static String _headline(ReadinessBand b, AutonomicDirection d) {

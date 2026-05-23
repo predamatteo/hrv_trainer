@@ -152,36 +152,76 @@ class ResonanceAssessment {
     this.rationale,
   });
 
-  /// Trova la frequenza con il miglior compromesso di SDNN, LF-peak e
-  /// vicinanza della freq dominante alla freq respiratoria target.
+  /// Individua la frequenza di risonanza come il ritmo respiratorio che
+  /// **massimizza l'ampiezza dell'oscillazione cardiaca** indotta dal respiro
+  /// (RSA), criterio cardine del protocollo di Lehrer-Vaschillo: la RF è per
+  /// definizione la frequenza dove l'oscillazione HRV raggiunge il picco.
+  ///
+  /// Le metriche di ampiezza (peak-to-trough RR, potenza LF, SDNN) sono
+  /// normalizzate **rispetto al massimo osservato tra gli step**: l'assessment
+  /// è un confronto intra-sessione tra 5 ritmi, quindi conta quale ritmo rende
+  /// l'oscillazione più grande *relativamente agli altri*, non il valore
+  /// assoluto. Questo sostituisce il vecchio scoring in cui la potenza LF era
+  /// binaria (presente/assente) e quindi non premiava l'ampiezza maggiore —
+  /// proprio la grandezza che la risonanza dovrebbe massimizzare.
+  ///
+  /// Pesi: peak-to-trough domina (0.45) perché su Instinct Solar 2X gli RR sono
+  /// stimati da HR a ~1 Hz: RMSSD/HF battito-battito risultano degradati, ma
+  /// l'onda respiratoria a ~0.1 Hz (periodo ~10 s) è ben dentro il limite di
+  /// Nyquist, quindi peak-to-trough e potenza LF restano affidabili. La
+  /// coerenza (picco spettrale allineato alla freq respiratoria) pesa 0.15 come
+  /// conferma che l'ampiezza è guidata dal respiro e non da artefatti.
   factory ResonanceAssessment.analyze(
     DateTime takenAt,
     List<AssessmentStep> steps,
   ) {
-    if (steps.isEmpty) {
+    final valid =
+        steps.where((s) => s.metrics.samples >= 10).toList(growable: false);
+    if (valid.isEmpty) {
       return ResonanceAssessment(takenAt: takenAt, steps: steps);
     }
-    double score(AssessmentStep s) {
-      final targetHz = s.bpm / 60.0;
-      final freqCloseness = 1.0 /
-          (1.0 + ((s.metrics.lfPeakHz - targetHz).abs() * 40));
-      // sdnn normalizzato (ipotesi range 20-150 ms) + lf power * closeness
-      final sdnnNorm = (s.metrics.sdnnMs / 150.0).clamp(0.0, 1.0);
-      return sdnnNorm * 0.5 +
-          (s.metrics.lfPower > 0 ? 0.3 : 0.0) +
-          freqCloseness * 0.2;
+
+    double maxOf(double Function(AssessmentStep) f) {
+      var m = 0.0;
+      for (final s in valid) {
+        final v = f(s);
+        if (v > m) m = v;
+      }
+      return m > 0 ? m : 1.0; // evita divisione per zero
     }
 
-    final ranked = [...steps]..sort((a, b) => score(b).compareTo(score(a)));
+    final maxP2t = maxOf((s) => s.metrics.peakToTroughMs);
+    final maxLf = maxOf((s) => s.metrics.lfPower);
+    final maxSdnn = maxOf((s) => s.metrics.sdnnMs);
+
+    double score(AssessmentStep s) {
+      // Ampiezza RSA picco-valle: il segno più diretto della risonanza.
+      final p2t = (s.metrics.peakToTroughMs / maxP2t).clamp(0.0, 1.0);
+      // Potenza spettrale a bassa frequenza: ampiezza dell'oscillazione lenta.
+      final lf = (s.metrics.lfPower / maxLf).clamp(0.0, 1.0);
+      // Varianza globale come ampiezza di supporto.
+      final sdnn = (s.metrics.sdnnMs / maxSdnn).clamp(0.0, 1.0);
+      // Coerenza: il picco spettrale deve cadere sulla freq respiratoria,
+      // altrimenti l'ampiezza è rumore e non risonanza guidata dal respiro.
+      final targetHz = s.bpm / 60.0;
+      final coherence =
+          1.0 / (1.0 + (s.metrics.lfPeakHz - targetHz).abs() * 40);
+      return p2t * 0.45 + lf * 0.30 + sdnn * 0.10 + coherence * 0.15;
+    }
+
+    final ranked = [...valid]..sort((a, b) => score(b).compareTo(score(a)));
     final best = ranked.first;
     return ResonanceAssessment(
       takenAt: takenAt,
       steps: steps,
       resonanceBpm: best.bpm,
       rationale:
-          'Miglior compromesso tra ampiezza SDNN (${best.metrics.sdnnMs.toStringAsFixed(1)} ms), '
-          'picco LF a ${best.metrics.lfPeakHz.toStringAsFixed(3)} Hz '
-          'e sincronia con la respirazione (${best.bpm.toStringAsFixed(1)} bpm).',
+          'Ampiezza dell\'oscillazione respiratoria massima a '
+          '${best.bpm.toStringAsFixed(1)} respiri/min: picco-valle '
+          '${best.metrics.peakToTroughMs.toStringAsFixed(0)} ms, picco '
+          'spettrale a ${best.metrics.lfPeakHz.toStringAsFixed(3)} Hz '
+          '(${(best.metrics.lfPeakHz * 60).toStringAsFixed(1)} cicli/min), '
+          'SDNN ${best.metrics.sdnnMs.toStringAsFixed(0)} ms.',
     );
   }
 }
