@@ -60,7 +60,13 @@ class _TrainingScreenState extends ConsumerState<TrainingScreen>
       // (osservata fino a ~17 s quando l'app sul watch non è già aperta).
       final wasWaiting = prev == null || prev.startedAt == null;
       if (wasWaiting && next.startedAt != null && next.running) {
-        ref.read(pacerControllerProvider.notifier).start();
+        // startedAt è già retro-datato a mStartMs del watch (in coordinate
+        // phone), quindi all'avvio del ticker il watch respira da `offset`.
+        // Lo passiamo come startOffset così inspira/espira del phone
+        // combaciano col watch invece di ripartire da zero — che lasciava il
+        // cerchio del phone indietro di tutta la latenza BT/openApplication.
+        final offset = DateTime.now().difference(next.startedAt!);
+        ref.read(pacerControllerProvider.notifier).start(startOffset: offset);
       }
       if (prev != null && prev.running && !next.running) {
         // Ferma il pacer ticker quando la sessione termina (auto-stop o

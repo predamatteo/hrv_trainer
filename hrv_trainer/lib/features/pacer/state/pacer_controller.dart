@@ -55,6 +55,12 @@ class PacerController extends StateNotifier<PacerTick> {
   final Ref _ref;
   Timer? _timer;
   final Stopwatch _watch = Stopwatch();
+  // Offset aggiunto all'elapsed dello Stopwatch per ancorare il pacer del
+  // phone allo stesso t=0 del watch (mStartMs). Quando il phone fa partire il
+  // ticker, il watch respira già da `_startOffset`: senza, il cerchio del
+  // phone resterebbe indietro di tutta la latenza BT/openApplication (fino a
+  // ~17 s). Vale 0 nel pacer "libero" (PacerScreen) dove non c'è watch.
+  Duration _startOffset = Duration.zero;
   BreathingPhase? _lastPhase;
   bool _hasVibrator = false;
 
@@ -78,12 +84,17 @@ class PacerController extends StateNotifier<PacerTick> {
   // (pattern lenti 0.1 Hz) ed evita rebuild eccessivi del widget tree.
   static const _tickInterval = Duration(milliseconds: 50);
 
-  void start() {
+  /// [startOffset] ancora il pacer al t=0 del watch: l'elapsed effettivo
+  /// parte da questo valore invece che da zero, così la fase ispira/espira
+  /// combacia con quella del watch (master) anche se il phone avvia il
+  /// ticker decine di secondi dopo che il watch ha fissato mStartMs.
+  void start({Duration startOffset = Duration.zero}) {
     if (_timer != null) {
       debugPrint('[PACER] start IGNORED (already running)');
       return;
     }
-    debugPrint('[PACER] start');
+    debugPrint('[PACER] start offset=${startOffset.inMilliseconds}ms');
+    _startOffset = startOffset;
     _watch
       ..reset()
       ..start();
@@ -106,11 +117,14 @@ class PacerController extends StateNotifier<PacerTick> {
   void _tick() {
     if (!mounted) return;
     _tickCount++;
+    // Elapsed effettivo = Stopwatch + offset di allineamento al watch. È
+    // questo (non _watch puro) a guidare la fase, altrimenti il pacer del
+    // phone ripartirebbe da zero restando indietro rispetto al watch.
+    final elapsedMs = _watch.elapsed.inMilliseconds + _startOffset.inMilliseconds;
     if (_tickCount == 1 || _tickCount % 100 == 0) {
-      debugPrint(
-          '[PACER] tick #$_tickCount elapsed=${_watch.elapsedMilliseconds}ms');
+      debugPrint('[PACER] tick #$_tickCount elapsed=${elapsedMs}ms');
     }
-    final s = pacerAt(prefs.pattern, _watch.elapsed.inMilliseconds / 1000.0);
+    final s = pacerAt(prefs.pattern, elapsedMs / 1000.0);
     state = PacerTick(
       phase: s.phase,
       progress: s.progress,
