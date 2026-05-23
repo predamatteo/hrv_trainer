@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
+import '../../shared/hrv/breathing_pacer.dart';
+import '../../shared/hrv/hrv_interpretation.dart';
 import '../../shared/hrv/hrv_metrics.dart';
 import '../../shared/hrv/rr_interval.dart';
 import '../../shared/hrv/session_models.dart';
@@ -118,7 +120,14 @@ class _DetailBody extends StatelessWidget {
         const SizedBox(height: 12),
         _MetricsCard(metrics: s.metrics),
         const SizedBox(height: 12),
-        _TachogramCard(rr: rr, startedAt: s.startedAt),
+        _TachogramCard(
+          rr: rr,
+          startedAt: s.startedAt,
+          metrics: s.metrics,
+          pattern: s.pattern,
+          kind: s.kind,
+          tag: s.tag,
+        ),
         const SizedBox(height: 12),
         _PoincareCard(rr: rr, metrics: s.metrics),
         const SizedBox(height: 12),
@@ -310,6 +319,12 @@ class _MetricsCard extends StatelessWidget {
                   hint: 'Ampiezza RSA'),
               _row('Campioni RR', '${metrics.samples}'),
             ]),
+            const SizedBox(height: 6),
+            // L'Instinct Solar 2X non espone RR battito-battito: i campioni
+            // sono ricostruiti da HR a ~1 Hz (60000/bpm). RMSSD/SDNN così
+            // calcolati sottostimano il valore "clinico" del 5-15% perché la
+            // banda HF (0.15-0.40 Hz, vagale puro) è fuori Nyquist.
+            _EstimationDisclaimer(),
             const SizedBox(height: 8),
             _section(theme, 'Frequency-domain (Lomb-Scargle)', [
               _row('LF peak',
@@ -396,7 +411,18 @@ class _MetricsCard extends StatelessWidget {
 class _TachogramCard extends StatelessWidget {
   final List<RrInterval> rr;
   final DateTime startedAt;
-  const _TachogramCard({required this.rr, required this.startedAt});
+  final HrvMetrics metrics;
+  final BreathingPattern pattern;
+  final SessionKind kind;
+  final SessionTag tag;
+  const _TachogramCard({
+    required this.rr,
+    required this.startedAt,
+    required this.metrics,
+    required this.pattern,
+    required this.kind,
+    required this.tag,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -430,6 +456,18 @@ class _TachogramCard extends StatelessWidget {
                     )
                   : _buildChart(theme),
             ),
+            if (rr.length >= 5) ...[
+              const SizedBox(height: 12),
+              _InsightBox(
+                insight: interpretTachogram(
+                  rr: rr,
+                  metrics: metrics,
+                  pattern: pattern,
+                  kind: kind,
+                  tag: tag,
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -598,14 +636,10 @@ class _PoincareCard extends StatelessWidget {
                     )
                   : _buildScatter(theme),
             ),
-            const SizedBox(height: 6),
-            Text(
-              'Più la nuvola è compatta lungo la diagonale, più il ritmo è regolare; '
-              'una nuvola arrotondata indica buona variabilità a breve termine (SD1).',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.outline,
-              ),
-            ),
+            if (rr.length >= 5) ...[
+              const SizedBox(height: 12),
+              _InsightBox(insight: interpretPoincare(metrics)),
+            ],
           ],
         ),
       ),
@@ -735,6 +769,48 @@ class _QualityCard extends StatelessWidget {
   }
 }
 
+class _EstimationDisclaimer extends StatelessWidget {
+  const _EstimationDisclaimer();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: scheme.outlineVariant.withValues(alpha: 0.5),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline,
+              size: 16, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              'Valori stimati da HR a ~1 Hz: l\'Instinct Solar 2X non '
+              'espone RR battito-battito reali. RMSSD/SDNN così calcolati '
+              'tendono a essere 5-15% sotto la "Salute Istantanea" Garmin '
+              'nativa, che usa il PPG ad alta frequenza. Utili per '
+              'monitorare il proprio trend, non per confronti clinici '
+              'inter-individuo.',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+                height: 1.4,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _NotesCard extends StatelessWidget {
   final String notes;
   const _NotesCard({required this.notes});
@@ -785,4 +861,69 @@ class _Chip extends StatelessWidget {
       ),
     );
   }
+}
+
+class _InsightBox extends StatelessWidget {
+  final ChartInsight insight;
+  const _InsightBox({required this.insight});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = _levelColor(insight.level, theme);
+    final icon = _levelIcon(insight.level);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 18, color: color),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  insight.headline,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    color: color,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            insight.body,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+              height: 1.35,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Color _levelColor(InsightLevel l, ThemeData theme) => switch (l) {
+        InsightLevel.excellent => Colors.green.shade600,
+        InsightLevel.good => Colors.lightGreen.shade700,
+        InsightLevel.fair => Colors.amber.shade700,
+        InsightLevel.poor => Colors.red.shade600,
+        InsightLevel.neutral => theme.colorScheme.primary,
+      };
+
+  IconData _levelIcon(InsightLevel l) => switch (l) {
+        InsightLevel.excellent => Icons.star_rounded,
+        InsightLevel.good => Icons.check_circle_outline,
+        InsightLevel.fair => Icons.info_outline,
+        InsightLevel.poor => Icons.warning_amber_rounded,
+        InsightLevel.neutral => Icons.lightbulb_outline,
+      };
 }

@@ -26,6 +26,54 @@ extension SessionTagX on SessionTag {
         SessionTag.recovery => 'Recovery',
         SessionTag.general => 'Generale',
       };
+
+  /// Pattern respiratorio consigliato per il contesto. L'utente può
+  /// comunque modificare lo slider prima dello start.
+  ///
+  /// Razionale clinico (Lehrer-Gevirtz 2014, Shaffer 2017):
+  /// - 6 bpm è la frequenza di risonanza media adulta;
+  /// - 5.5 bpm allunga l'espirazione → maggior attivazione vagale per
+  ///   stati con simpatico dominante (stress, rest day);
+  /// - 5 bpm è il limite inferiore confortevole, indica dominanza
+  ///   parasimpatica massima (pre-sonno).
+  BreathingPattern get defaultPattern => switch (this) {
+        SessionTag.sleep => BreathingPattern.fromBpm(5.0),
+        SessionTag.stress => BreathingPattern.fromBpm(5.5),
+        SessionTag.recovery => BreathingPattern.fromBpm(5.5),
+        _ => BreathingPattern.resonance6bpm,
+      };
+
+  /// Durata consigliata in minuti. Calibrate sui protocolli di
+  /// biofeedback (Lehrer & Gevirtz, "Heart Rate Variability Biofeedback")
+  /// e sull'uso reale del dispositivo (Instinct Solar 2X — sessioni
+  /// lunghe scaricano la batteria con BT attivo).
+  int get defaultDurationMin => switch (this) {
+        SessionTag.morning => 3,
+        SessionTag.preWorkout => 5,
+        SessionTag.postWorkout => 15,
+        SessionTag.stress => 10,
+        SessionTag.sleep => 10,
+        SessionTag.recovery => 20,
+        SessionTag.general => 20,
+      };
+
+  /// Razionale mostrato come hint nella UI di setup sessione.
+  String get rationale => switch (this) {
+        SessionTag.morning =>
+          'Check-in mattutino a riposo: alimenta la Morning Readiness.',
+        SessionTag.preWorkout =>
+          'Priming vagale prima del carico: 5 min sono sufficienti.',
+        SessionTag.postWorkout =>
+          'Recovery: aiuta il vago a riprendere il sopravvento dopo il workout.',
+        SessionTag.stress =>
+          'De-escalation: espirazione allungata (5.5 bpm) per abbassare il simpatico.',
+        SessionTag.recovery =>
+          'Rest day: sessione lunga a respiro lento per allenare il baroriflesso.',
+        SessionTag.sleep =>
+          'Pre-sonno: 5 bpm per indurre dominanza parasimpatica.',
+        SessionTag.general =>
+          'Training generico alla frequenza di risonanza standard.',
+      };
 }
 
 /// Una sessione completa (assessment o training).

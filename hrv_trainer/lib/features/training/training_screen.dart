@@ -39,14 +39,16 @@ class _TrainingScreenState extends ConsumerState<TrainingScreen>
   void initState() {
     super.initState();
     _tag = widget.initialTag;
-    // Morning check-in = sessione corta (3 min) con pacer standard 6 bpm.
-    if (_tag == SessionTag.morning) {
-      _pattern = BreathingPattern.resonance6bpm;
-      _durationMin = 3;
-    } else {
-      _pattern = BreathingPattern.resonance6bpm;
-      _durationMin = 20;
-    }
+    _applyTagDefaults();
+  }
+
+  // Quando l'utente cambia tag aggiorniamo pattern e durata ai default del
+  // contesto (es. sleep → 5 bpm 10 min, postWorkout → 6 bpm 15 min). Gli
+  // slider restano modificabili dopo: il tag fornisce un punto di partenza
+  // sensato, non un vincolo.
+  void _applyTagDefaults() {
+    _pattern = _tag.defaultPattern;
+    _durationMin = _tag.defaultDurationMin;
   }
 
   @override
@@ -204,9 +206,19 @@ class _TrainingScreenState extends ConsumerState<TrainingScreen>
                 return ChoiceChip(
                   label: Text(t.label),
                   selected: _tag == t,
-                  onSelected: (_) => setState(() => _tag = t),
+                  onSelected: (_) => setState(() {
+                    _tag = t;
+                    _applyTagDefaults();
+                  }),
                 );
               }).toList(),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _tag.rationale,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
             ),
             const Spacer(),
             FilledButton.icon(
