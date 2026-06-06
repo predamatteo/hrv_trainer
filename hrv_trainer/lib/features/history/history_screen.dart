@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:fl_chart/fl_chart.dart';
 import 'package:file_picker/file_picker.dart';
@@ -11,6 +12,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../shared/connect_iq/hr_source_provider.dart';
+import '../../shared/hrv/hrv_metrics.dart';
 import '../../shared/hrv/session_models.dart';
 import '../../shared/storage/session_repository.dart';
 import '../home/state/readiness_provider.dart';
@@ -92,7 +94,7 @@ class HistoryScreen extends ConsumerWidget {
       ),
       body: Column(
         children: [
-          _FiltersBar(filter: filter, ref: ref),
+          _FilterSummaryBar(filter: filter, ref: ref),
           const Divider(height: 1),
           Expanded(
             child: sessions.when(
@@ -363,118 +365,179 @@ class _BackupMenuState extends ConsumerState<_BackupMenu> {
   }
 }
 
-class _FiltersBar extends StatelessWidget {
+/// Riga compatta a una sola linea che riassume il filtro attivo e fa da
+/// trigger per il pannello [_FilterSheet]. Sostituisce le due righe di chip
+/// sempre visibili che rubavano spazio verticale in cima allo storico: ora i
+/// controlli vivono in un bottom sheet, qui resta solo il contesto ("cosa sto
+/// guardando") in forma minimale e on-brand con le card della pagina.
+class _FilterSummaryBar extends StatelessWidget {
   final HistoryFilter filter;
   final WidgetRef ref;
-  const _FiltersBar({required this.filter, required this.ref});
+  const _FilterSummaryBar({required this.filter, required this.ref});
 
-  // I preset standard usano `int?` per modellare "Tutto" come `null` senza
-  // un wrapper dedicato. L'ordine è dal più stretto al più ampio così la
-  // selezione progressiva da sinistra a destra è naturale per l'utente.
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final tagLabel = filter.tag?.label ?? 'Tutti i tipi';
+    final summary = '${filter.label} · $tagLabel';
+    // Default = ultimi 30 gg, tutti i tipi: quando il filtro è "non default"
+    // accendiamo l'icona col colore primario per segnalare che una vista
+    // ristretta è attiva (evita di chiedersi "perché vedo poche sessioni?").
+    final isFiltered = filter.days != 30 || filter.tag != null;
+    final accent = isFiltered ? scheme.primary : scheme.onSurfaceVariant;
+
+    return InkWell(
+      onTap: () => _showFilterSheet(context, ref),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        child: Row(
+          children: [
+            Icon(Icons.tune, size: 18, color: accent),
+            const SizedBox(width: 10),
+            Text('Filtri',
+                style: theme.textTheme.titleSmall
+                    ?.copyWith(color: scheme.onSurface)),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                summary,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.end,
+                style: theme.textTheme.bodyMedium
+                    ?.copyWith(color: scheme.onSurfaceVariant),
+              ),
+            ),
+            Icon(Icons.expand_more, size: 20, color: scheme.onSurfaceVariant),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+void _showFilterSheet(BuildContext context, WidgetRef ref) {
+  showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    builder: (_) => const _FilterSheet(),
+  );
+}
+
+/// Pannello dei filtri storico (finestra temporale + tipo di sessione).
+///
+/// Spostato dalle due righe di chip sempre a vista a un bottom sheet: qui c'è
+/// spazio per mostrare TUTTI i tag su più righe (Wrap) senza scroll orizzontale
+/// e senza affollare la schermata principale. Watcha [historyFilterProvider]
+/// così le selezioni si riflettono in tempo reale sui chip e sulla lista
+/// sottostante (il sheet resta aperto: l'utente può combinare più filtri).
+class _FilterSheet extends ConsumerWidget {
+  const _FilterSheet();
+
+  // Preset dal più stretto al più ampio; `null` = "Tutto" (nessun filtro
+  // temporale), modellato senza wrapper dedicato.
   static const List<int?> _presetDays = [7, 30, 60, null];
 
   bool _isPreset(int? days) => _presetDays.contains(days);
 
   String _labelForPreset(int? d) => d == null ? 'Tutto' : '$d gg';
 
-  void _selectPreset(int? days) {
-    ref.read(historyFilterProvider.notifier).state =
-        filter.copyWith(days: days);
-  }
-
-  Future<void> _openCustomDialog(BuildContext context) async {
+  Future<void> _openCustomDialog(
+    BuildContext context,
+    WidgetRef ref,
+    HistoryFilter filter,
+  ) async {
     final picked = await showDialog<int?>(
       context: context,
       builder: (ctx) => _CustomDaysDialog(initial: filter.days ?? 30),
     );
     if (picked == null) return;
-    // picked == 0 (gestito dal dialog) significa "annullato" → ignoriamo.
+    final notifier = ref.read(historyFilterProvider.notifier);
     // picked == -1 è il sentinel per "Tutto" scelto dal dialog stesso.
     if (picked == -1) {
-      _selectPreset(null);
+      notifier.state = filter.copyWith(days: null);
     } else if (picked > 0) {
-      ref.read(historyFilterProvider.notifier).state =
-          filter.copyWith(days: picked);
+      notifier.state = filter.copyWith(days: picked);
     }
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final filter = ref.watch(historyFilterProvider);
+    final notifier = ref.read(historyFilterProvider.notifier);
+    final theme = Theme.of(context);
     final customSelected = !_isPreset(filter.days);
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Text('Finestra:'),
-              const SizedBox(width: 8),
-              Expanded(
-                child: SingleChildScrollView(
-                  // I 4 preset + "Personalizza" non entrano quasi mai in un
-                  // SegmentedButton su smartphone — passiamo a chip
-                  // scrollabili orizzontalmente per evitare overflow su
-                  // device piccoli e per supportare il valore custom.
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      for (final d in _presetDays)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 6),
-                          child: ChoiceChip(
-                            label: Text(_labelForPreset(d)),
-                            selected: filter.days == d,
-                            onSelected: (_) => _selectPreset(d),
-                          ),
-                        ),
-                      ChoiceChip(
-                        avatar: const Icon(Icons.edit_outlined, size: 16),
-                        // Quando un valore custom è attivo lo mostriamo come
-                        // label del chip "Personalizza" — così l'utente vede
-                        // a colpo d'occhio quale finestra sta filtrando senza
-                        // dover riaprire il dialog.
-                        label: Text(
-                          customSelected ? '${filter.days} gg' : 'Personalizza',
-                        ),
-                        selected: customSelected,
-                        onSelected: (_) => _openCustomDialog(context),
-                      ),
-                    ],
-                  ),
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text('Filtri', style: theme.textTheme.titleLarge),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          SizedBox(
-            height: 36,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
+                TextButton(
+                  // Reset rapido al default (30 gg, tutti i tipi).
+                  onPressed: () =>
+                      notifier.state = const HistoryFilter(),
+                  child: const Text('Reimposta'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text('Finestra temporale', style: theme.textTheme.titleSmall),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final d in _presetDays)
+                  ChoiceChip(
+                    label: Text(_labelForPreset(d)),
+                    selected: filter.days == d,
+                    onSelected: (_) =>
+                        notifier.state = filter.copyWith(days: d),
+                  ),
+                ChoiceChip(
+                  avatar: const Icon(Icons.edit_outlined, size: 16),
+                  // Con un valore custom attivo il chip mostra i giorni scelti
+                  // così l'utente vede la finestra senza riaprire il dialog.
+                  label: Text(
+                    customSelected ? '${filter.days} gg' : 'Personalizza',
+                  ),
+                  selected: customSelected,
+                  onSelected: (_) => _openCustomDialog(context, ref, filter),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Text('Tipo di sessione', style: theme.textTheme.titleSmall),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
               children: [
                 ChoiceChip(
                   label: const Text('Tutti'),
                   selected: filter.tag == null,
-                  onSelected: (_) {
-                    ref.read(historyFilterProvider.notifier).state =
-                        filter.copyWith(clearTag: true);
-                  },
+                  onSelected: (_) =>
+                      notifier.state = filter.copyWith(clearTag: true),
                 ),
-                ...SessionTag.values.map((t) => Padding(
-                      padding: const EdgeInsets.only(left: 6),
-                      child: ChoiceChip(
-                        label: Text(t.label),
-                        selected: filter.tag == t,
-                        onSelected: (_) {
-                          ref.read(historyFilterProvider.notifier).state =
-                              filter.copyWith(tag: t);
-                        },
-                      ),
-                    )),
+                for (final t in SessionTag.values)
+                  ChoiceChip(
+                    label: Text(t.label),
+                    selected: filter.tag == t,
+                    onSelected: (_) =>
+                        notifier.state = filter.copyWith(tag: t),
+                  ),
               ],
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -590,6 +653,41 @@ class _EmptyState extends StatelessWidget {
       );
 }
 
+/// Colore stabile per tag: serve a distinguere visivamente contesti
+/// fisiologicamente diversi sul trend (un punto post-workout, con vago
+/// momentaneamente depresso, NON va letto sulla stessa scala di una lettura
+/// mattutina a riposo). I colori sono fissi e indipendenti dal seed Material 3
+/// per restare riconoscibili anche fra temi diversi; usiamo tinte sature ma
+/// leggibili sia in light che in dark.
+Color tagColor(SessionTag tag) => switch (tag) {
+      SessionTag.morning => const Color(0xFFF59E0B), // ambra alba
+      SessionTag.preWorkout => const Color(0xFF3B82F6), // blu
+      SessionTag.postWorkout => const Color(0xFFEF4444), // rosso carico
+      SessionTag.sleep => const Color(0xFF8B5CF6), // viola notte
+      SessionTag.stress => const Color(0xFFF97316), // arancio allerta
+      SessionTag.recovery => const Color(0xFF22C55E), // verde recupero
+      SessionTag.general => const Color(0xFF64748B), // grigio neutro
+    };
+
+/// ln(RMSSD) robusto: lnRMSSD è la trasformazione standard per normalizzare
+/// la distribuzione fortemente skewed dell'RMSSD (la baseline readiness lavora
+/// in questo spazio). Per RMSSD <= 0 ritorniamo null così il punto viene
+/// escluso dal trend invece di propagare un -inf nel grafico.
+double? lnRmssdOf(Session s) {
+  final v = s.metrics.rmssdMs;
+  if (v <= 0) return null;
+  return math.log(v);
+}
+
+/// Colore del pallino qualità segnale dalla % di artefatti: <5 verde,
+/// <15 ambra, altrimenti rosso. Mappa diretta sulle stesse soglie con cui
+/// HrvCalculator declassa la confidenza, così il dot e la label sono coerenti.
+Color qualityColor(double artifactPct) {
+  if (artifactPct < 5) return const Color(0xFF22C55E);
+  if (artifactPct < 15) return const Color(0xFFF59E0B);
+  return const Color(0xFFEF4444);
+}
+
 class _HistoryBody extends StatelessWidget {
   final List<Session> sessions;
   const _HistoryBody({required this.sessions});
@@ -602,6 +700,7 @@ class _HistoryBody extends StatelessWidget {
       children: [
         if (chrono.length >= 3) _TrendCard(sessions: chrono),
         const SizedBox(height: 8),
+        _WeeklyAggregateCard(sessions: chrono),
         HrvHistogram(sessions: sessions),
         const SizedBox(height: 8),
         ...sessions.map((s) => _SessionTile(session: s)),
@@ -610,6 +709,23 @@ class _HistoryBody extends StatelessWidget {
   }
 }
 
+/// Trend principale in spazio **lnRMSSD**.
+///
+/// Cambiamenti rispetto alla versione iniziale (che plottava RMSSD lineare +
+/// HRV score sullo stesso asse):
+///  - Serie primaria = ln(RMSSD): è la trasformazione standard per normalizzare
+///    la distribuzione skewed dell'RMSSD ed è lo spazio in cui la readiness
+///    calcola baseline/SWC. Confrontare giorni in lnRMSSD evita che un singolo
+///    valore alto schiacci visivamente tutto il resto.
+///  - Banda baseline ombreggiata = media mobile ± 1 SD del lnRMSSD sulle
+///    sessioni mostrate: dà il "corridoio normale". Punti sopra/sotto la banda
+///    sono fuori dalla propria variabilità abituale.
+///  - Pallini colorati per tag: post-workout, morning, stress... hanno vago
+///    in stati fisiologicamente diversi; colorarli evita di leggere come
+///    "calo HRV" ciò che è solo un contesto diverso mescolato sulla stessa
+///    linea.
+///  - L'HRV score (0-100) è stato tolto dall'asse principale (collisione di
+///    scala con lnRMSSD ~3-5) e relegato a una sparkline sottile separata.
 class _TrendCard extends StatelessWidget {
   final List<Session> sessions;
   const _TrendCard({required this.sessions});
@@ -618,18 +734,61 @@ class _TrendCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final rmssdSpots = <FlSpot>[];
-    final scoreSpots = <FlSpot>[];
+
+    // Spot lnRMSSD: indici di posizione, non di tempo (asse categorico come
+    // nella versione precedente). I valori non finiti vengono saltati ma
+    // l'indice X resta allineato all'array `sessions` per il tap-to-detail.
+    final lnSpots = <FlSpot>[];
+    final lnValues = <double>[]; // per media/SD/CV (solo valori validi)
     for (var i = 0; i < sessions.length; i++) {
-      rmssdSpots.add(FlSpot(i.toDouble(), sessions[i].metrics.rmssdMs));
-      scoreSpots.add(FlSpot(i.toDouble(), sessions[i].metrics.hrvScore));
+      final ln = lnRmssdOf(sessions[i]);
+      if (ln == null) continue;
+      lnSpots.add(FlSpot(i.toDouble(), ln));
+      lnValues.add(ln);
     }
+    final scoreSpots = <FlSpot>[
+      for (var i = 0; i < sessions.length; i++)
+        FlSpot(i.toDouble(), sessions[i].metrics.hrvScore),
+    ];
+
+    // Banda baseline: media e SD (campionaria) del lnRMSSD sulle sessioni
+    // mostrate. È volutamente una statistica "trailing semplice" sull'intera
+    // finestra visibile, non la baseline rolling-7 della readiness: qui serve
+    // come riferimento visivo del corridoio normale del periodo guardato.
+    final mean = lnValues.isEmpty
+        ? 0.0
+        : lnValues.reduce((a, b) => a + b) / lnValues.length;
+    final sd = lnValues.length < 2
+        ? 0.0
+        : math.sqrt(lnValues
+                .map((v) => (v - mean) * (v - mean))
+                .reduce((a, b) => a + b) /
+            (lnValues.length - 1));
+    final bandLow = mean - sd;
+    final bandHigh = mean + sd;
+
+    // CV(lnRMSSD) sugli ultimi 7 giorni: indicatore di stabilità autonomica.
+    // È il coefficiente di variazione (SD/media * 100) calcolato in spazio
+    // lnRMSSD sulle sole sessioni delle ultime 168h. Alta variabilità = sistema
+    // poco stabile / stress accumulato.
+    final cv7 = _cvLnLast7Days(sessions);
+
+    // Range Y con un po' di margine attorno a banda e dati per non clippare i
+    // pallini estremi né la banda.
+    final allY = <double>[...lnValues, bandLow, bandHigh];
+    var minY = allY.isEmpty ? 0.0 : allY.reduce(math.min);
+    var maxY = allY.isEmpty ? 1.0 : allY.reduce(math.max);
+    final pad = (maxY - minY) * 0.12 + 0.05;
+    minY -= pad;
+    maxY += pad;
+
     // interval per i label dell'asse X: almeno 1, mai > numero di sessioni
     // (fl_chart asserta interval <= range). Per liste corte si vede ogni label.
     final xLabelStep = sessions.length <= 1
         ? 1.0
         : (sessions.length / 5).ceil().clamp(1, sessions.length - 1).toDouble();
     final df = DateFormat('dd/MM');
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -638,12 +797,13 @@ class _TrendCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Text('Trend HRV (${sessions.length} sessioni)',
-                    style: theme.textTheme.titleMedium),
-                const Spacer(),
+                Expanded(
+                  child: Text('Trend lnRMSSD (${sessions.length} sessioni)',
+                      style: theme.textTheme.titleMedium),
+                ),
                 Text('Tap punto = dettaglio',
                     style: theme.textTheme.labelSmall?.copyWith(
-                      color: theme.colorScheme.outline,
+                      color: scheme.outline,
                     )),
               ],
             ),
@@ -653,6 +813,22 @@ class _TrendCard extends StatelessWidget {
               child: LineChart(LineChartData(
                 minX: -0.5,
                 maxX: (sessions.length - 1) + 0.5,
+                minY: minY,
+                maxY: maxY,
+                // Banda baseline ombreggiata: due linee orizzontali invisibili
+                // (a bandLow e bandHigh) riempite in mezzo con betweenBarsData.
+                // È il modo fl_chart-nativo per una fascia ±1 SD che segue
+                // l'asse senza un annotation manuale.
+                rangeAnnotations: RangeAnnotations(
+                  horizontalRangeAnnotations: [
+                    if (lnValues.length >= 2)
+                      HorizontalRangeAnnotation(
+                        y1: bandLow,
+                        y2: bandHigh,
+                        color: scheme.primary.withValues(alpha: 0.10),
+                      ),
+                  ],
+                ),
                 gridData: FlGridData(
                   show: true,
                   drawVerticalLine: false,
@@ -671,7 +847,7 @@ class _TrendCard extends StatelessWidget {
                       showTitles: true,
                       reservedSize: 32,
                       getTitlesWidget: (v, _) => Text(
-                        v.toStringAsFixed(0),
+                        v.toStringAsFixed(1),
                         style: theme.textTheme.labelSmall,
                       ),
                     ),
@@ -706,19 +882,42 @@ class _TrendCard extends StatelessWidget {
                         color: scheme.outlineVariant.withValues(alpha: 0.5)),
                   ),
                 ),
+                // Linea della media baseline come riferimento al centro della
+                // fascia (tratteggiata, neutra).
+                extraLinesData: ExtraLinesData(
+                  horizontalLines: [
+                    if (lnValues.isNotEmpty)
+                      HorizontalLine(
+                        y: mean,
+                        color: scheme.outline.withValues(alpha: 0.6),
+                        strokeWidth: 1,
+                        dashArray: const [3, 4],
+                      ),
+                  ],
+                ),
                 lineBarsData: [
                   LineChartBarData(
-                    spots: rmssdSpots,
-                    color: scheme.primary,
+                    spots: lnSpots,
+                    // Linea neutra di collegamento: il segnale di contesto sta
+                    // nei pallini, non nel colore della linea.
+                    color: scheme.primary.withValues(alpha: 0.55),
                     barWidth: 2,
-                    dotData: const FlDotData(show: true),
-                  ),
-                  LineChartBarData(
-                    spots: scoreSpots,
-                    color: scheme.secondary,
-                    barWidth: 2,
-                    dashArray: const [4, 4],
-                    dotData: const FlDotData(show: true),
+                    dotData: FlDotData(
+                      show: true,
+                      // Pallino colorato per tag della sessione corrispondente.
+                      getDotPainter: (spot, _, _, _) {
+                        final i = spot.x.toInt();
+                        final c = (i >= 0 && i < sessions.length)
+                            ? tagColor(sessions[i].tag)
+                            : scheme.primary;
+                        return FlDotCirclePainter(
+                          radius: 3.5,
+                          color: c,
+                          strokeWidth: 1.2,
+                          strokeColor: scheme.surface,
+                        );
+                      },
+                    ),
                   ),
                 ],
                 lineTouchData: LineTouchData(
@@ -738,11 +937,11 @@ class _TrendCard extends StatelessWidget {
                       final i = s.x.toInt();
                       if (i < 0 || i >= sessions.length) return null;
                       final sess = sessions[i];
-                      final isRmssd = s.barIndex == 0;
-                      final label = isRmssd ? 'RMSSD' : 'Score';
                       return LineTooltipItem(
                         '${df.format(sess.startedAt.toLocal())}\n'
-                        '$label: ${s.y.toStringAsFixed(1)}',
+                        '${sess.tag.label}\n'
+                        'lnRMSSD ${s.y.toStringAsFixed(2)} '
+                        '(RMSSD ${sess.metrics.rmssdMs.toStringAsFixed(0)})',
                         TextStyle(color: scheme.onInverseSurface),
                       );
                     }).toList(),
@@ -761,31 +960,321 @@ class _TrendCard extends StatelessWidget {
                 ),
               )),
             ),
-            const SizedBox(height: 8),
-            Row(
+            const SizedBox(height: 10),
+            // Stat compatta CV(lnRMSSD) 7gg + legenda banda.
+            Wrap(
+              spacing: 16,
+              runSpacing: 6,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                _legend(scheme.primary, 'RMSSD (ms)'),
-                const SizedBox(width: 16),
-                _legend(scheme.secondary, 'HRV score'),
+                Text(
+                  'CV(lnRMSSD) 7gg: '
+                  '${cv7 == null ? '—' : '${cv7.toStringAsFixed(1)}%'}',
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                _bandLegend(scheme, 'Baseline ±1 SD'),
               ],
-            )
+            ),
+            const SizedBox(height: 8),
+            // Sparkline secondaria sottile per l'HRV score (0-100), separata
+            // dall'asse principale per evitare la collisione di scala.
+            _ScoreSparkline(spots: scoreSpots),
+            const SizedBox(height: 8),
+            // Legenda dei tag: una sola riga scrollabile coi colori usati nei
+            // pallini, così l'utente sa come leggere i contesti.
+            SizedBox(
+              height: 22,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                children: [
+                  for (final t in SessionTag.values)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 12),
+                      child: _legend(tagColor(t), t.label),
+                    ),
+                ],
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 
+  /// CV(lnRMSSD) sulle sessioni delle ultime 168h. null se < 2 valori validi.
+  static double? _cvLnLast7Days(List<Session> sessions) {
+    final cutoff = DateTime.now().subtract(const Duration(days: 7));
+    final vals = <double>[];
+    for (final s in sessions) {
+      if (s.startedAt.isBefore(cutoff)) continue;
+      final ln = lnRmssdOf(s);
+      if (ln != null) vals.add(ln);
+    }
+    if (vals.length < 2) return null;
+    final m = vals.reduce((a, b) => a + b) / vals.length;
+    if (m == 0) return null;
+    final variance =
+        vals.map((v) => (v - m) * (v - m)).reduce((a, b) => a + b) /
+            (vals.length - 1);
+    return 100.0 * math.sqrt(variance) / m.abs();
+  }
+
   Widget _legend(Color c, String label) => Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 12,
-            height: 12,
+            width: 10,
+            height: 10,
             decoration: BoxDecoration(color: c, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 5),
+          Text(label),
+        ],
+      );
+
+  Widget _bandLegend(ColorScheme scheme, String label) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 18,
+            height: 12,
+            decoration: BoxDecoration(
+              color: scheme.primary.withValues(alpha: 0.12),
+              border: Border.all(
+                color: scheme.outline.withValues(alpha: 0.5),
+                width: 0.5,
+              ),
+              borderRadius: BorderRadius.circular(2),
+            ),
           ),
           const SizedBox(width: 6),
           Text(label),
         ],
       );
+}
+
+/// Sparkline sottile e separata per l'HRV score (0-100). Tenuta fuori dall'asse
+/// principale lnRMSSD per non avere due scale incompatibili sullo stesso grafico
+/// (lnRMSSD ~3-5 vs score 0-100). Niente assi/griglia: serve solo l'andamento.
+class _ScoreSparkline extends StatelessWidget {
+  final List<FlSpot> spots;
+  const _ScoreSparkline({required this.spots});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    if (spots.length < 2) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('HRV score (0-100)',
+            style: theme.textTheme.labelSmall
+                ?.copyWith(color: scheme.outline)),
+        const SizedBox(height: 2),
+        SizedBox(
+          height: 36,
+          child: LineChart(LineChartData(
+            minY: 0,
+            maxY: 100,
+            minX: spots.first.x - 0.5,
+            maxX: spots.last.x + 0.5,
+            gridData: const FlGridData(show: false),
+            borderData: FlBorderData(show: false),
+            titlesData: const FlTitlesData(show: false),
+            lineTouchData: const LineTouchData(enabled: false),
+            lineBarsData: [
+              LineChartBarData(
+                spots: spots,
+                color: scheme.secondary,
+                barWidth: 1.5,
+                dotData: const FlDotData(show: false),
+                belowBarData: BarAreaData(
+                  show: true,
+                  color: scheme.secondary.withValues(alpha: 0.12),
+                ),
+              ),
+            ],
+          )),
+        ),
+      ],
+    );
+  }
+}
+
+/// Aggregato settimanale del lnRMSSD: bucket per settimana ISO, barre della
+/// MEDIA lnRMSSD della settimana con il numero di sessioni come label/tooltip.
+///
+/// Aggregare per settimana smussa il rumore giornaliero (sonno, idratazione,
+/// orario di misura) e rende visibile il trend di fondo dell'adattamento. Pura
+/// aggregazione in memoria sulla lista già caricata; non mostrato con meno di
+/// 2 settimane di dati (un'unica barra non è un trend).
+class _WeeklyAggregateCard extends StatelessWidget {
+  final List<Session> sessions;
+  const _WeeklyAggregateCard({required this.sessions});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    final weeks = _aggregateByIsoWeek(sessions);
+    if (weeks.length < 2) return const SizedBox.shrink();
+
+    final maxMean = weeks.map((w) => w.meanLn).fold<double>(0, math.max);
+    // Label X: data del lunedì della settimana, ridotta per non affollare.
+    final df = DateFormat('dd/MM');
+    final int labelStep = (weeks.length / 6).ceil().clamp(1, weeks.length);
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text('Media settimanale lnRMSSD',
+                      style: theme.textTheme.titleMedium),
+                ),
+                Text('${weeks.length} settimane',
+                    style: theme.textTheme.labelSmall),
+              ],
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 150,
+              child: BarChart(BarChartData(
+                alignment: BarChartAlignment.spaceAround,
+                maxY: maxMean * 1.18 + 0.05,
+                gridData: FlGridData(
+                  show: true,
+                  drawVerticalLine: false,
+                  getDrawingHorizontalLine: (_) => FlLine(
+                    color: scheme.outlineVariant.withValues(alpha: 0.4),
+                    strokeWidth: 0.5,
+                  ),
+                ),
+                borderData: FlBorderData(show: false),
+                titlesData: FlTitlesData(
+                  topTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false)),
+                  rightTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false)),
+                  leftTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      reservedSize: 30,
+                      getTitlesWidget: (v, _) => Text(
+                        v.toStringAsFixed(1),
+                        style: theme.textTheme.labelSmall,
+                      ),
+                    ),
+                  ),
+                  bottomTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      reservedSize: 22,
+                      getTitlesWidget: (v, _) {
+                        final i = v.toInt();
+                        if (i < 0 || i >= weeks.length) {
+                          return const SizedBox.shrink();
+                        }
+                        if (i % labelStep != 0) return const SizedBox.shrink();
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            df.format(weeks[i].weekStart),
+                            style: theme.textTheme.labelSmall,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+                barTouchData: BarTouchData(
+                  touchTooltipData: BarTouchTooltipData(
+                    fitInsideVertically: true,
+                    fitInsideHorizontally: true,
+                    getTooltipItem: (group, _, rod, _) {
+                      final w = weeks[group.x];
+                      return BarTooltipItem(
+                        'Sett. ${df.format(w.weekStart)}\n'
+                        'lnRMSSD medio ${w.meanLn.toStringAsFixed(2)}\n'
+                        '${w.count} sessioni',
+                        TextStyle(color: scheme.onInverseSurface),
+                      );
+                    },
+                  ),
+                ),
+                barGroups: [
+                  for (var i = 0; i < weeks.length; i++)
+                    BarChartGroupData(
+                      x: i,
+                      barRods: [
+                        BarChartRodData(
+                          toY: weeks[i].meanLn,
+                          color: scheme.primary,
+                          width: 14,
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                      ],
+                    ),
+                ],
+              )),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Ogni barra = media lnRMSSD della settimana; '
+              'tocca per il numero di sessioni.',
+              style:
+                  theme.textTheme.labelSmall?.copyWith(color: scheme.outline),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Bucket per settimana ISO (lunedì come inizio), ordinati cronologicamente.
+  /// La chiave è il lunedì (a mezzanotte locale) della settimana che contiene
+  /// `startedAt`; aggreghiamo solo lnRMSSD validi.
+  static List<_WeekBucket> _aggregateByIsoWeek(List<Session> sessions) {
+    final byWeek = <DateTime, List<double>>{};
+    for (final s in sessions) {
+      final ln = lnRmssdOf(s);
+      if (ln == null) continue;
+      final local = s.startedAt.toLocal();
+      // Lunedì della settimana: weekday 1=lun..7=dom → sottrai (weekday-1) gg.
+      final day = DateTime(local.year, local.month, local.day);
+      final monday = day.subtract(Duration(days: day.weekday - 1));
+      (byWeek[monday] ??= <double>[]).add(ln);
+    }
+    final out = byWeek.entries
+        .map((e) => _WeekBucket(
+              weekStart: e.key,
+              meanLn: e.value.reduce((a, b) => a + b) / e.value.length,
+              count: e.value.length,
+            ))
+        .toList()
+      ..sort((a, b) => a.weekStart.compareTo(b.weekStart));
+    return out;
+  }
+}
+
+/// Aggregato di una singola settimana ISO per [_WeeklyAggregateCard].
+class _WeekBucket {
+  final DateTime weekStart;
+  final double meanLn;
+  final int count;
+  const _WeekBucket({
+    required this.weekStart,
+    required this.meanLn,
+    required this.count,
+  });
 }
 
 class _SessionTile extends StatelessWidget {
@@ -794,32 +1283,65 @@ class _SessionTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     final df = DateFormat('dd MMM • HH:mm');
     final id = session.id;
+    final m = session.metrics;
+    final qColor = qualityColor(m.percentArtifactual);
+    final accent = tagColor(session.tag);
+
     return Card(
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-          child: Icon(switch (session.kind) {
-            SessionKind.assessment => Icons.tune,
-            SessionKind.training => Icons.self_improvement,
-            SessionKind.reading => Icons.wb_sunny_outlined,
-            SessionKind.freestyle => Icons.air,
-          }),
+      // Striscia accent a sinistra del colore-tag: a colpo d'occhio distingue
+      // i contesti nella lista (un post-workout non si confonde con un morning).
+      clipBehavior: Clip.antiAlias,
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border(left: BorderSide(color: accent, width: 4)),
         ),
-        title: Text(
-          '${session.tag.label} • ${session.pattern.breathsPerMinute.toStringAsFixed(1)} bpm',
+        child: ListTile(
+          leading: CircleAvatar(
+            backgroundColor: scheme.primaryContainer,
+            child: Icon(switch (session.kind) {
+              SessionKind.assessment => Icons.tune,
+              SessionKind.training => Icons.self_improvement,
+              SessionKind.reading => Icons.wb_sunny_outlined,
+              SessionKind.freestyle => Icons.air,
+            }),
+          ),
+          title: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '${session.tag.label} • '
+                  '${session.pattern.breathsPerMinute.toStringAsFixed(1)} bpm',
+                ),
+              ),
+              // Pallino qualità segnale: verde/ambra/rosso dalla % artefatti.
+              Container(
+                width: 10,
+                height: 10,
+                decoration:
+                    BoxDecoration(color: qColor, shape: BoxShape.circle),
+              ),
+            ],
+          ),
+          subtitle: Text(
+            '${df.format(session.startedAt.toLocal())} • '
+            '${session.duration.inMinutes} min\n'
+            'Score ${m.hrvScore.toStringAsFixed(0)} • '
+            'RMSSD ${m.rmssdMs.toStringAsFixed(0)} • '
+            'SDNN ${m.sdnnMs.toStringAsFixed(0)}\n'
+            // Hint qualità: confidenza + % artefatti, così sessioni rumorose
+            // o a bassa affidabilità sono leggibili senza aprire il dettaglio.
+            'Affidabilità ${m.confidence.label} • '
+            'artefatti ${m.percentArtifactual.toStringAsFixed(0)}%',
+          ),
+          isThreeLine: true,
+          trailing: id == null ? null : const Icon(Icons.chevron_right),
+          onTap:
+              id == null ? null : () => context.push('/history/session/$id'),
         ),
-        subtitle: Text(
-          '${df.format(session.startedAt.toLocal())} • '
-          '${session.duration.inMinutes} min\n'
-          'Score ${session.metrics.hrvScore.toStringAsFixed(0)} • '
-          'RMSSD ${session.metrics.rmssdMs.toStringAsFixed(0)} • '
-          'SDNN ${session.metrics.sdnnMs.toStringAsFixed(0)}',
-        ),
-        isThreeLine: true,
-        trailing: id == null ? null : const Icon(Icons.chevron_right),
-        onTap: id == null ? null : () => context.push('/history/session/$id'),
       ),
     );
   }
