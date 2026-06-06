@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../readiness/state/readiness_providers.dart';
 import 'state/readiness_provider.dart';
+import 'widgets/hrv_general_card.dart';
 import 'widgets/morning_checkin_prompt_card.dart';
 import 'widgets/readiness_card.dart';
 
@@ -39,6 +41,7 @@ class HomeScreen extends ConsumerWidget {
         onRefresh: () async {
           ref.invalidate(readinessProvider);
           ref.invalidate(morningCheckInDoneTodayProvider);
+          ref.invalidate(morningReadingsProvider);
           // Aspetta che il future si riavvii per dare feedback visivo
           // chiaro (l'indicatore resta finché il provider non riemette).
           await ref.read(readinessProvider.future);
@@ -51,8 +54,9 @@ class HomeScreen extends ConsumerWidget {
           const MorningCheckInPromptCard(),
           ReadinessCard(
             onTap: () => context.push('/readiness'),
-            onStartMorning: () => context.push('/readiness/checkin'),
           ),
+          const SizedBox(height: 12),
+          const HrvGeneralCard(),
           const SizedBox(height: 16),
           _BigActionCard(
             icon: Icons.tune,
