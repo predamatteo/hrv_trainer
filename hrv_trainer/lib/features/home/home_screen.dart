@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'state/readiness_provider.dart';
+import 'widgets/morning_checkin_prompt_card.dart';
 import 'widgets/readiness_card.dart';
 
 class HomeScreen extends ConsumerWidget {
@@ -37,6 +38,7 @@ class HomeScreen extends ConsumerWidget {
         // RemoteSessionPersister._onSummary).
         onRefresh: () async {
           ref.invalidate(readinessProvider);
+          ref.invalidate(morningCheckInDoneTodayProvider);
           // Aspetta che il future si riavvii per dare feedback visivo
           // chiaro (l'indicatore resta finché il provider non riemette).
           await ref.read(readinessProvider.future);
@@ -44,18 +46,14 @@ class HomeScreen extends ConsumerWidget {
         child: ListView(
         padding: const EdgeInsets.all(20),
         children: [
+          // Promemoria del giorno: visibile solo finché il Morning check-in di
+          // oggi non è stato fatto, poi sparisce (gestisce da sé lo spazio).
+          const MorningCheckInPromptCard(),
           ReadinessCard(
             onTap: () => context.push('/readiness'),
             onStartMorning: () => context.push('/readiness/checkin'),
           ),
           const SizedBox(height: 16),
-          _BigActionCard(
-            icon: Icons.wb_sunny_outlined,
-            title: 'Morning check-in',
-            subtitle: '1-3 minuti a riposo, respiro spontaneo',
-            onTap: () => context.push('/readiness/checkin'),
-          ),
-          const SizedBox(height: 12),
           _BigActionCard(
             icon: Icons.tune,
             title: 'Assessment Frequenza di Risonanza',
