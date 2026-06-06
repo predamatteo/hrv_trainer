@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../shared/connect_iq/heart_rate_source.dart';
-import '../../shared/connect_iq/hr_source_provider.dart';
 import 'state/readiness_provider.dart';
 import 'widgets/readiness_card.dart';
 
@@ -12,8 +10,6 @@ class HomeScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final hrSrc = ref.watch(heartRateSourceProvider);
-    final stateAsync = ref.watch(hrSourceStateProvider);
     final theme = Theme.of(context);
 
     return Scaffold(
@@ -28,7 +24,7 @@ class HomeScreen extends ConsumerWidget {
           IconButton(
             icon: const Icon(Icons.settings_outlined),
             tooltip: 'Impostazioni',
-            onPressed: () {},
+            onPressed: () => context.push('/settings'),
           ),
         ],
       ),
@@ -48,17 +44,16 @@ class HomeScreen extends ConsumerWidget {
         child: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          _DeviceCard(source: hrSrc, state: stateAsync.value),
-          const SizedBox(height: 12),
           ReadinessCard(
-            onStartMorning: () => context.push('/training?tag=morning'),
+            onTap: () => context.push('/readiness'),
+            onStartMorning: () => context.push('/readiness/checkin'),
           ),
           const SizedBox(height: 16),
           _BigActionCard(
             icon: Icons.wb_sunny_outlined,
             title: 'Morning check-in',
-            subtitle: '2-3 minuti a riposo per la tua readiness',
-            onTap: () => context.push('/training?tag=morning'),
+            subtitle: '1-3 minuti a riposo, respiro spontaneo',
+            onTap: () => context.push('/readiness/checkin'),
           ),
           const SizedBox(height: 12),
           _BigActionCard(
@@ -102,41 +97,6 @@ class HomeScreen extends ConsumerWidget {
           ),
         ],
       ),
-      ),
-    );
-  }
-}
-
-class _DeviceCard extends StatelessWidget {
-  final HeartRateSource source;
-  final HrSourceState? state;
-
-  const _DeviceCard({required this.source, required this.state});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final connected = state == HrSourceState.connected;
-    final color = connected
-        ? theme.colorScheme.primary
-        : theme.colorScheme.outline;
-    final label = switch (state ?? HrSourceState.disconnected) {
-      HrSourceState.connected => 'Connesso',
-      HrSourceState.connecting => 'Connessione…',
-      HrSourceState.error => 'Errore',
-      HrSourceState.disconnected => 'Disconnesso',
-    };
-    return Card(
-      child: ListTile(
-        leading: Icon(Icons.watch_outlined, color: color, size: 32),
-        title: Text(source.displayName),
-        subtitle: Text(label),
-        trailing: FilledButton.tonal(
-          onPressed: connected
-              ? () => source.stop()
-              : () => source.start(),
-          child: Text(connected ? 'Scollega' : 'Connetti'),
-        ),
       ),
     );
   }
