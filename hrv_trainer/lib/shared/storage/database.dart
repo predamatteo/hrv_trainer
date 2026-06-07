@@ -13,7 +13,7 @@ class AppDatabase {
     final path = p.join(dir.path, 'hrv_trainer.db');
     _db = await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onUpgrade: (db, oldV, newV) async {
         if (oldV < 2) {
           await db.execute(
@@ -21,6 +21,14 @@ class AppDatabase {
           );
           await db.execute(
             'CREATE INDEX IF NOT EXISTS idx_sessions_tag ON sessions(tag, started_at DESC)',
+          );
+        }
+        if (oldV < 3) {
+          // Colonna additiva per i metadati Morning Readiness
+          // (postura/protocollo/contesto), serializzati come JSON. Migrazione
+          // sicura: ADD COLUMN nullable non tocca i dati esistenti.
+          await db.execute(
+            'ALTER TABLE sessions ADD COLUMN morning_meta_json TEXT',
           );
         }
       },
@@ -34,7 +42,8 @@ class AppDatabase {
             ended_at INTEGER,
             pattern_json TEXT NOT NULL,
             metrics_json TEXT NOT NULL,
-            notes TEXT
+            notes TEXT,
+            morning_meta_json TEXT
           )
         ''');
         await db.execute(

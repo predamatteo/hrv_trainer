@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -5,8 +7,12 @@ import 'core/router/app_router.dart';
 import 'core/theme/app_theme.dart';
 import 'shared/connect_iq/hr_source_provider.dart';
 import 'shared/connect_iq/remote_session_persister.dart';
+import 'shared/notifications/reminder_settings.dart';
 
 void main() {
+  // Necessario: il warm-up dei provider tocca i plugin (timezone,
+  // SharedPreferences, notifiche) durante il primo frame.
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const ProviderScope(child: HrvTrainerApp()));
 }
 
@@ -23,6 +29,11 @@ class _HrvTrainerAppState extends ConsumerState<HrvTrainerApp>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Istanzia il controller dei promemoria all'avvio: carica le preferenze
+    // persistite e riallinea lo scheduling dell'OS (reconcile dopo eventuale
+    // cambio di fuso orario o aggiornamento dell'app). Non-autoDispose →
+    // resta vivo per tutta la durata dell'app.
+    ref.read(reminderControllerProvider);
   }
 
   @override
@@ -45,7 +56,17 @@ class _HrvTrainerAppState extends ConsumerState<HrvTrainerApp>
     // "Avviare HRV Trainer?" ogni volta che l'utente riapre la phone app.
     // Per recovery esplicito c'è il bottone "Sincronizza" in cronologia.
     if (state == AppLifecycleState.resumed) {
-      ref.read(heartRateSourceProvider).requestSync();
+      final src = ref.read(heartRateSourceProvider);
+      // Ri-aggancia il device handle: se il watch si è ri-connesso in BT mentre
+      // l'app era in background, il handle nativo poteva essere rimasto stale e
+      // lo stato del telefono fuori sync. reconnect() ri-scansiona e ri-emette
+      // lo STATE reale del device, evitando il badge bloccato su "Disconnesso".
+      unawaited(src.reconnect());
+      src.requestSync();
+      // Modalità promemoria "smart skip": riallinea lo scheduling allo stato di
+      // oggi quando l'utente torna in app (es. dopo una sessione completata).
+      // No-op se la modalità skip è off.
+      unawaited(ref.read(reminderControllerProvider.notifier).refresh());
     }
   }
 

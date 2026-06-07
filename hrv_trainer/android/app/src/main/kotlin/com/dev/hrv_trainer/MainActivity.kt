@@ -32,6 +32,8 @@ class MainActivity : FlutterActivity() {
                         b.start(hz, pacer, result)
                     }
                     "stop" -> b.stop(result)
+                    "forceStop" -> b.forceStop(result)
+                    "reconnect" -> b.reconnect(result)
                     "requestHrv" -> {
                         val reqId = call.argument<Int>("reqId") ?: 0
                         b.requestHrv(reqId, result)

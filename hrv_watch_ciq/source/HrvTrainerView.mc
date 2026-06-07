@@ -34,6 +34,9 @@ class HrvTrainerView extends Ui.View {
     hidden var mSnapshot;
     hidden var mLastPhase;
     hidden var mTicker;
+    // Contatore tick (5 Hz) con telefono disconnesso durante una sessione
+    // phone-driven; oltre la soglia il watchdog aborta. Vedi checkPhoneLost().
+    hidden var mPhoneLostTicks;
 
     // === Stato pannello config (SCREEN_CONFIG) ===
     //
@@ -72,6 +75,7 @@ class HrvTrainerView extends Ui.View {
         mLastPhase = -1;
         mTicker = null;
         mPageIdx = 0;
+        mPhoneLostTicks = 0;
     }
 
     // === API per HrvTrainerApp =============================================
@@ -86,6 +90,7 @@ class HrvTrainerView extends Ui.View {
         mBpm = null;
         mLastPhase = -1;
         mSnapshot = null;
+        mPhoneLostTicks = 0;
         if (mTicker == null) {
             mTicker = new Timer.Timer();
             // 200 ms = 5 Hz: sufficiente per cerchio respiro su display
@@ -185,6 +190,17 @@ class HrvTrainerView extends Ui.View {
             return;
         }
 
+        // Watchdog "perdita telefono": se l'app phone non può più mandare STOP
+        // (es. killata) e il telefono si disconnette, una sessione phone-driven
+        // resterebbe a campionare+trasmettere a vuoto fino all'auto-stop sulla
+        // durata piena (= "l'orologio continua ad andare", batteria sprecata).
+        // Dopo ~12s di telefono assente la abortiamo (il telefono è il system
+        // of record: nessun dato da salvare lato watch).
+        if (checkPhoneLost()) {
+            App.getApp().requestAbort();
+            return;
+        }
+
         if (mPacer != null) {
             mSnapshot = PacerCalc.compute(mPacer, elapsedMs);
             if (mSnapshot.phase != mLastPhase) {
@@ -193,6 +209,28 @@ class HrvTrainerView extends Ui.View {
             }
         }
         Ui.requestUpdate();
+    }
+
+    // Ritorna true quando la sessione va abortita per telefono perso. Conta
+    // solo per sessioni phone-driven; le standalone (GPS) proseguono offline.
+    hidden function checkPhoneLost() {
+        if (!App.getApp().isPhoneDrivenActive()) {
+            mPhoneLostTicks = 0;
+            return false;
+        }
+        var connected = true;
+        try {
+            connected = Sys.getDeviceSettings().phoneConnected;
+        } catch (ex) {
+            connected = true; // in dubbio NON abortire
+        }
+        if (connected) {
+            mPhoneLostTicks = 0;
+            return false;
+        }
+        mPhoneLostTicks += 1;
+        // 5 Hz × 60 ≈ 12 s di telefono assente: tollera blip BT brevi.
+        return mPhoneLostTicks >= 60;
     }
 
     // Vibrazione breve a inizio fase. Pattern diversi per dare al polso

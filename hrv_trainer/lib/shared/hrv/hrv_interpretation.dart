@@ -152,6 +152,142 @@ ChartInsight interpretPoincare(HrvMetrics metrics) {
   );
 }
 
+/// Analisi puntuale dello spettro di potenza (PSD) in base al bilancio
+/// LF/HF in unità normalizzate, alla coherence ratio e all'allineamento del
+/// picco spettrale con la frequenza del respiro guidato.
+///
+/// Tre segnali, in ordine di rilevanza per il biofeedback:
+///  1. **Coherence** ([HrvMetrics.coherenceRatio]): quanto la potenza è
+///     concentrata in un picco netto. Alto = oscillazione cardiaca "pulita",
+///     coerente, segno che il respiro sta trascinando il sistema
+///     cardiovascolare in risonanza.
+///  2. **Allineamento** picco↔respiro: il picco LF dovrebbe cadere sulla
+///     [BreathingPattern.frequencyHz]. Se cade altrove, l'ampiezza non è
+///     guidata dal respiro.
+///  3. **Bilancio LF/HF** (lfNu/hfNu): a respiro lento (~6 bpm, 0.1 Hz) la
+///     potenza migra in LF per costruzione — un LF n.u. alto qui NON è
+///     "stress simpatico" ma il marker atteso della respirazione di risonanza.
+///
+/// Il livello è guidato soprattutto da coherence + allineamento: un bilancio
+/// "LF dominante" durante il respiro lento è desiderato, non penalizzante.
+ChartInsight interpretSpectrum(HrvMetrics m, BreathingPattern p) {
+  if (m.samples < 20 || m.totalPower <= 0) {
+    return const ChartInsight(
+      headline: 'Spettro non disponibile',
+      body: 'Servono almeno ~20 battiti puliti per stimare il periodogramma '
+          'di Lomb-Scargle. La sessione è troppo corta o troppo rumorosa.',
+      level: InsightLevel.neutral,
+    );
+  }
+
+  final lfNu = m.lfNu;
+  final hfNu = m.hfNu;
+  final coh = m.coherenceRatio;
+  final paceHz = p.frequencyHz;
+  // Disallineamento del picco LF rispetto al respiro guidato. Usiamo lfPeakHz
+  // perché a ~6 bpm la risonanza vive nella banda LF (0.04-0.15 Hz).
+  final alignHz = (m.lfPeakHz - paceHz).abs();
+  final peakBpm = m.lfPeakHz * 60;
+  final pacerBpm = p.breathsPerMinute;
+
+  final parts = <String>[];
+
+  // Componente 1: bilancio LF/HF n.u. contestualizzato sul respiro lento.
+  if (lfNu >= 70) {
+    parts.add(
+        'La potenza è concentrata nella banda LF (${lfNu.toStringAsFixed(0)}% '
+        'vs ${hfNu.toStringAsFixed(0)}% HF): a respiro lento è il profilo '
+        'atteso, perché l\'oscillazione di risonanza (~0.1 Hz) cade proprio '
+        'in LF, non un segno di stress simpatico.');
+  } else if (lfNu >= 50) {
+    parts.add(
+        'Il bilancio spettrale pende verso LF (${lfNu.toStringAsFixed(0)}% LF '
+        '/ ${hfNu.toStringAsFixed(0)}% HF): l\'onda respiratoria lenta inizia '
+        'a dominare lo spettro.');
+  } else {
+    parts.add(
+        'La potenza resta sbilanciata verso HF (${hfNu.toStringAsFixed(0)}% HF '
+        '/ ${lfNu.toStringAsFixed(0)}% LF): l\'energia è ancora nella banda '
+        'respiratoria veloce, segno che il respiro lento non ha ancora '
+        'spostato il baricentro spettrale.');
+  }
+
+  // Componente 2: forma del picco (coherence ratio).
+  if (coh >= 2.5) {
+    parts.add(
+        'Il picco di potenza è alto e stretto (coherence ${coh.toStringAsFixed(1)}): '
+        'l\'oscillazione cardiaca è molto coerente, concentrata in un\'unica '
+        'frequenza — la firma della respirazione di risonanza.');
+  } else if (coh >= 1.0) {
+    parts.add(
+        'Il picco è discretamente definito (coherence ${coh.toStringAsFixed(1)}): '
+        'c\'è coerenza, ma la potenza è ancora un po\' dispersa attorno alla '
+        'frequenza dominante.');
+  } else {
+    parts.add(
+        'Lo spettro è piatto e diffuso (coherence ${coh.toStringAsFixed(1)}): '
+        'nessun picco netto domina, l\'oscillazione cardiaca non è ancora '
+        'organizzata su una singola frequenza.');
+  }
+
+  // Componente 3: allineamento del picco con il pacer.
+  if (alignHz <= 0.012) {
+    parts.add(
+        'Il picco cade a ${m.lfPeakHz.toStringAsFixed(3)} Hz '
+        '(${peakBpm.toStringAsFixed(1)} cicli/min), sovrapposto al pacer '
+        '(${pacerBpm.toStringAsFixed(1)} bpm): perfetta sincronia '
+        'cardio-respiratoria.');
+  } else if (alignHz <= 0.025) {
+    parts.add(
+        'Il picco a ${m.lfPeakHz.toStringAsFixed(3)} Hz '
+        '(${peakBpm.toStringAsFixed(1)} cicli/min) è vicino al pacer '
+        '(${pacerBpm.toStringAsFixed(1)} bpm) ma non perfettamente '
+        'allineato: prova a respirare più in armonia con la guida.');
+  } else {
+    parts.add(
+        'Il picco a ${m.lfPeakHz.toStringAsFixed(3)} Hz '
+        '(${peakBpm.toStringAsFixed(1)} cicli/min) è lontano dal pacer '
+        '(${pacerBpm.toStringAsFixed(1)} bpm): l\'ampiezza non è ancora '
+        'guidata dal respiro.');
+  }
+
+  return ChartInsight(
+    headline: _spectrumHeadline(coh: coh, alignHz: alignHz, lfNu: lfNu),
+    body: parts.join(' '),
+    level: _spectrumLevel(coh: coh, alignHz: alignHz),
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SPETTRO — helper privati
+// ─────────────────────────────────────────────────────────────────────────────
+
+String _spectrumHeadline({
+  required double coh,
+  required double alignHz,
+  required double lfNu,
+}) {
+  final aligned = alignHz <= 0.012;
+  if (coh >= 2.5 && aligned) return 'Risonanza spettrale netta';
+  if (coh >= 2.5) return 'Picco coerente ma fuori frequenza';
+  if (coh >= 1.0 && aligned) return 'Coerenza in costruzione';
+  if (coh >= 1.0) return 'Picco presente, da allineare';
+  if (lfNu >= 70) return 'Potenza in LF, picco diffuso';
+  return 'Spettro ancora disorganizzato';
+}
+
+InsightLevel _spectrumLevel({
+  required double coh,
+  required double alignHz,
+}) {
+  final aligned = alignHz <= 0.012;
+  final nearby = alignHz <= 0.025;
+  if (coh >= 2.5 && aligned) return InsightLevel.excellent;
+  if (coh >= 1.5 && nearby) return InsightLevel.good;
+  if (coh >= 1.0 || nearby) return InsightLevel.fair;
+  return InsightLevel.poor;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // PROFILO TAG — soglie e narrative tarate sul contesto fisiologico
 // ─────────────────────────────────────────────────────────────────────────────

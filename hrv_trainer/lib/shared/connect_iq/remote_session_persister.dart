@@ -8,6 +8,7 @@ import '../../features/home/state/readiness_provider.dart';
 import '../hrv/breathing_pacer.dart';
 import '../hrv/hrv_metrics.dart';
 import '../hrv/session_models.dart';
+import '../notifications/reminder_settings.dart';
 import '../storage/session_repository.dart';
 import 'hr_source_provider.dart';
 import 'remote_session_summary.dart';
@@ -134,6 +135,10 @@ class RemoteSessionPersister {
 
       _ref.invalidate(sessionsListProvider);
       _ref.invalidate(readinessProvider);
+
+      // Promemoria "smart skip": una sessione dal watch conta come "allenato
+      // oggi" → riallinea lo scheduling. No-op se la modalità skip è off.
+      unawaited(_ref.read(reminderControllerProvider.notifier).refresh());
 
       // ACK al watch: solo dopo persist riuscito, così se qualcosa fallisce
       // qui il watch ritrasmetterà al prossimo flush.

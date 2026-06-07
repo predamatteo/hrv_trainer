@@ -5,6 +5,9 @@ import '../../features/history/history_screen.dart';
 import '../../features/history/session_detail_screen.dart';
 import '../../features/home/home_screen.dart';
 import '../../features/pacer/pacer_screen.dart';
+import '../../features/readiness/morning_checkin_screen.dart';
+import '../../features/readiness/readiness_screen.dart';
+import '../../features/settings/settings_screen.dart';
 import '../../features/training/training_screen.dart';
 import '../../shared/hrv/session_models.dart';
 
@@ -31,6 +34,12 @@ final appRouter = GoRouter(
       },
     ),
     GoRoute(path: '/history', builder: (_, _) => const HistoryScreen()),
+    GoRoute(path: '/readiness', builder: (_, _) => const ReadinessScreen()),
+    GoRoute(
+      path: '/readiness/checkin',
+      builder: (_, _) => const MorningCheckInScreen(),
+    ),
+    GoRoute(path: '/settings', builder: (_, _) => const SettingsScreen()),
     GoRoute(
       path: '/history/session/:id',
       builder: (_, state) {

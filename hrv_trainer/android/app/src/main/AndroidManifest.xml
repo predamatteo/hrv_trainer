@@ -7,6 +7,19 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
 
+    <!-- Notifiche locali per i promemoria di allenamento. POST_NOTIFICATIONS è
+         richiesto a runtime su Android 13+. RECEIVE_BOOT_COMPLETED permette di
+         ri-pianificare i promemoria dopo il riavvio del telefono.
+         SCHEDULE_EXACT_ALARM/USE_EXACT_ALARM abilitano l'orario preciso: se non
+         concessi, il codice ricade automaticamente su scheduling inexact.
+         NB: per la pubblicazione su Google Play, USE_EXACT_ALARM è ammesso solo
+         per app di tipo sveglia/calendario — rimuoverlo in quel caso. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>
+    <uses-permission android:name="android.permission.VIBRATE"/>
+
     <application
         android:label="HRV Trainer"
         android:name="${applicationName}"
@@ -41,6 +54,23 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- flutter_local_notifications: il primo receiver mostra le notifiche
+             schedulate; il secondo le ri-pianifica dopo boot/aggiornamento app,
+             così i promemoria sopravvivono al riavvio del telefono. -->
+        <receiver
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver"
+            android:exported="false"/>
+        <receiver
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+                <action android:name="android.intent.action.QUICKBOOT_POWERON"/>
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON"/>
+            </intent-filter>
+        </receiver>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

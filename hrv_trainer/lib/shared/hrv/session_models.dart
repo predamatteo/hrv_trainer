@@ -1,5 +1,6 @@
 import 'breathing_pacer.dart';
 import 'hrv_metrics.dart';
+import 'morning_reading.dart';
 import 'rr_interval.dart';
 
 enum SessionKind { assessment, training, freestyle, reading }
@@ -87,6 +88,12 @@ class Session {
   final HrvMetrics metrics;
   final String? notes;
 
+  /// Metadati Morning Readiness (postura/protocollo/contesto). Valorizzato solo
+  /// per le letture mattutine create dal check-in dedicato; null altrimenti
+  /// (incluse le vecchie sessioni `morning` paced pre-feature). Persistito
+  /// nella colonna `morning_meta_json` (DB v3).
+  final MorningMeta? morning;
+
   const Session({
     this.id,
     required this.kind,
@@ -96,6 +103,7 @@ class Session {
     required this.pattern,
     required this.metrics,
     this.notes,
+    this.morning,
   });
 
   Duration get duration =>
@@ -110,6 +118,7 @@ class Session {
     BreathingPattern? pattern,
     HrvMetrics? metrics,
     String? notes,
+    MorningMeta? morning,
   }) =>
       Session(
         id: id ?? this.id,
@@ -120,6 +129,7 @@ class Session {
         pattern: pattern ?? this.pattern,
         metrics: metrics ?? this.metrics,
         notes: notes ?? this.notes,
+        morning: morning ?? this.morning,
       );
 }
 

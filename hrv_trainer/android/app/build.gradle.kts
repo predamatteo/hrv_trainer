@@ -22,6 +22,9 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // Richiesto da flutter_local_notifications (usa java.time): il
+        // desugaring fornisce le classi java.time a runtime sui minSdk < 26.
+        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
@@ -79,4 +82,7 @@ dependencies {
     // Se Garmin Connect Mobile non è installato sul telefono, il bridge fa
     // fallback su mock runtime (ServiceUnavailableException catturata).
     implementation("com.garmin.connectiq:ciq-companion-app-sdk:2.4.0@aar")
+
+    // Desugaring delle API java.time richiesto da flutter_local_notifications.
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 }

@@ -31,6 +31,11 @@ class GarminCiqSource implements HeartRateSource {
   final Map<int, Completer<HrvOnDemandResult?>> _pendingHrv = {};
   int _nextHrvReq = 1;
 
+  // Handshake di stop: armato in stop(), completato quando arriva un evento
+  // STATE con `stopped:true` dal watch. Permette di capire se lo STOP è stato
+  // davvero consegnato e, in caso contrario, ricadere su forceStop.
+  Completer<bool>? _pendingStopAck;
+
   StreamSubscription? _eventSub;
   HrSourceState _state = HrSourceState.disconnected;
 
@@ -110,12 +115,36 @@ class GarminCiqSource implements HeartRateSource {
         }
       case 'STATE':
         final v = raw['v'] as String?;
-        _setState(switch (v) {
-          'READY' => HrSourceState.connected,
-          'ACTIVE' => HrSourceState.connected,
-          'ERROR' => HrSourceState.error,
-          _ => HrSourceState.disconnected,
-        });
+        // ACK di stop dal watch (READY con stopped:true): chiude l'handshake
+        // così non scatta il fallback forceStop.
+        if (raw['stopped'] == true) {
+          final c = _pendingStopAck;
+          if (c != null && !c.isCompleted) c.complete(true);
+        }
+        // Mapping stato. CRITICO: il default NON deve forzare `disconnected`.
+        // Prima i nomi enum device grezzi (CONNECTED/NOT_CONNECTED/UNKNOWN)
+        // cadevano tutti nel default → "Disconnesso" anche su un device appena
+        // CONNESSO. Ora il bridge Kotlin traduce in DEVICE_CONNECTED /
+        // DEVICE_DISCONNECTED e qui ogni token sconosciuto/transitorio mantiene
+        // lo stato corrente.
+        switch (v) {
+          case 'READY':
+          case 'ACTIVE':
+          case 'DEVICE_CONNECTED':
+            _setState(HrSourceState.connected);
+          case 'ERROR':
+            _setState(HrSourceState.error);
+          case 'NO_DEVICE':
+            _setState(HrSourceState.noDevice);
+          case 'DISCONNECTED':
+          case 'DEVICE_DISCONNECTED':
+            _setState(HrSourceState.disconnected);
+          case null:
+            break; // payload malformato: ignora
+          default:
+            // Token transitorio (es. UNKNOWN): keep-current, non disconnettere.
+            break;
+        }
       case 'SESSION_SUMMARY':
         _summaryController.add(
           RemoteSessionSummary.fromJson(Map<String, dynamic>.from(raw)),
@@ -146,17 +175,63 @@ class GarminCiqSource implements HeartRateSource {
 
   @override
   Future<void> stop() async {
-    await _channel.invokeMethod<void>('stop');
-    // Stop di sessione != disconnessione BT col watch. Forzare
-    // `disconnected` qui produceva il bug del badge "Disconnesso" persistente
-    // dopo una sessione: se il watch aveva già auto-stoppato (countdown
-    // locale), non rispondeva con `STATE: READY` (vedi HrvTrainerApp.requestStop)
-    // e lo stato del phone restava bloccato finché l'utente non premeva
-    // "Connetti". Manteniamo `connected` come stato post-stop "ottimistico":
-    // se la connessione BT è davvero caduta lo aggiorneranno gli eventi
-    // STATE/Device dal SDK Connect IQ.
-    if (_state != HrSourceState.error) {
+    // 1) Stop "leggero": sendMessage diretto (niente openApplication → niente
+    //    dialog "Avviare?"). Va a segno quando l'app sul watch è in foreground.
+    //    Armiamo l'ack PRIMA di inviare per non perdere una risposta velocissima.
+    final ack1 = _armStopAck(const Duration(seconds: 3));
+    try {
+      await _channel.invokeMethod<void>('stop');
+    } on PlatformException {
+      // anche se il MethodChannel fallisce, proviamo comunque il fallback sotto.
+    }
+
+    // 2) Handshake: se non arriva STATE:READY(stopped) entro la finestra, l'app
+    //    sul watch era probabilmente tornata al watchface e lo STOP diretto si
+    //    è perso → "l'orologio continua ad andare". Ricadiamo su forceStop
+    //    (openApplication-backed): riporta l'app in foreground e consegna lo STOP.
+    final acked = await ack1;
+    if (!acked) {
+      final ack2 = _armStopAck(const Duration(seconds: 5));
+      try {
+        await _channel.invokeMethod<void>('forceStop');
+      } on PlatformException {
+        // best-effort: niente altro da tentare.
+      }
+      await ack2;
+    }
+
+    // Fermare la sessione != perdere il link BT. Se eravamo connessi restiamo
+    // connessi (gli eventi device reali — ora mappati correttamente — ci
+    // correggeranno se il link è davvero caduto). Non fabbrichiamo però una
+    // connessione dal nulla se eravamo disconnected/noDevice/error.
+    if (_state == HrSourceState.connected ||
+        _state == HrSourceState.connecting) {
       _setState(HrSourceState.connected);
+    }
+  }
+
+  /// Arma un completer per l'ACK di stop e ne ritorna il future con timeout.
+  /// Sostituisce un eventuale ack precedente; al termine si auto-ripulisce.
+  Future<bool> _armStopAck(Duration timeout) {
+    final c = Completer<bool>();
+    _pendingStopAck = c;
+    return c.future.timeout(timeout, onTimeout: () => false).whenComplete(() {
+      if (identical(_pendingStopAck, c)) _pendingStopAck = null;
+    });
+  }
+
+  @override
+  Future<void> reconnect() async {
+    // Non sbiancare lo stato se siamo già connessi: il refresh ri-emetterà
+    // comunque lo STATE reale del device. Mostriamo "connecting" solo se
+    // eravamo giù, così "Connetti"/"Riconnetti" dà feedback immediato.
+    if (_state != HrSourceState.connected) {
+      _setState(HrSourceState.connecting);
+    }
+    try {
+      await _channel.invokeMethod<void>('reconnect');
+    } on PlatformException {
+      _setState(HrSourceState.error);
     }
   }
 

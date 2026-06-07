@@ -14,12 +14,26 @@ using Toybox.Lang as Lang;
 // precisione.
 class HrvCompute {
     static function computeAndReply(reqId) {
-        var samples = collectRecentRr(60);
+        var raw = collectRecentRr(60);
         var rmssd = 0;
         var sdnn = 0;
         var rrOut = [];
 
-        if (samples != null && samples.size() >= 10) {
+        // Gate fisiologico (300-2000 ms) + anti-spike (|delta|>250 ms): scarta
+        // i battiti impossibili o i salti spuri dovuti a HR sample mancanti.
+        var samples = [];
+        if (raw != null) {
+            var prevc = null;
+            for (var c = 0; c < raw.size(); c++) {
+                var v = raw[c];
+                if (v < 300 || v > 2000) { continue; }
+                if (prevc != null && (v - prevc).abs() > 250) { continue; }
+                samples.add(v);
+                prevc = v;
+            }
+        }
+
+        if (samples.size() >= 10) {
             var n = samples.size();
             var sum = 0;
             for (var i = 0; i < n; i++) { sum += samples[i]; }

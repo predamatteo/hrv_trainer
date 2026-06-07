@@ -103,6 +103,24 @@ class GarminCiqBridge(private val context: Context) {
         }
     }
 
+    fun forceStop(result: MethodChannel.Result) {
+        try {
+            backend.forceStop()
+            result.success(null)
+        } catch (t: Throwable) {
+            result.error("FORCE_STOP_FAILED", t.message, null)
+        }
+    }
+
+    fun reconnect(result: MethodChannel.Result) {
+        try {
+            backend.reconnect()
+            result.success(null)
+        } catch (t: Throwable) {
+            result.error("RECONNECT_FAILED", t.message, null)
+        }
+    }
+
     fun requestHrv(reqId: Int, result: MethodChannel.Result) {
         try {
             backend.requestHrv(reqId)
@@ -154,7 +172,34 @@ class GarminCiqBridge(private val context: Context) {
 internal interface CiqBackend {
     var onEvent: (Map<String, Any?>) -> Unit
     fun start(hz: Int, pacer: Map<String, Any?> = emptyMap())
+
+    /**
+     * Stop "leggero": invia STOP_SESSION con un semplice `sendMessage` diretto
+     * (niente openApplication, quindi niente dialog "Avviare HRV Trainer?").
+     * È la via veloce e silenziosa: funziona quando l'app sul watch è in
+     * foreground (caso normale durante una sessione). Se il messaggio si perde
+     * (watch tornato al watchface) il phone non riceve l'ACK STATE:READY e
+     * ricade su [forceStop] — vedi handshake in GarminCiqSource.stop().
+     */
     fun stop()
+
+    /**
+     * Stop "forte": openApplication + STOP_SESSION, come fa start(). Riporta
+     * in foreground l'app sul watch se era stata backgroundata, così lo STOP
+     * arriva davvero e l'orologio smette di campionare ("watch keeps running").
+     * Usato solo come fallback quando lo [stop] diretto non è stato confermato.
+     */
+    fun forceStop()
+
+    /**
+     * Ri-aggancio esplicito al device: ri-scansiona i knownDevices, riassegna
+     * il device handle e ri-registra i listener (device + app events). Serve
+     * perché il handle viene altrimenti catturato una sola volta a onSdkReady
+     * e mai più: dopo un drop/ripristino BT restava stale e start/stop/sync
+     * fallivano in silenzio con NO_DEVICE finché non si riavviava l'app.
+     */
+    fun reconnect()
+
     fun requestHrv(reqId: Int)
     fun summaryAck(startMs: Long)
 
@@ -211,7 +256,18 @@ internal class MockCiqBackend(private val handler: Handler) : CiqBackend {
 
     override fun stop() {
         active = false
-        onEvent(mapOf("type" to "STATE", "v" to "READY"))
+        // stopped:true → il phone chiude l'handshake di stop senza fallback.
+        onEvent(mapOf("type" to "STATE", "v" to "READY", "stopped" to true))
+    }
+
+    override fun forceStop() {
+        // Mock: nessuna differenza con stop diretto.
+        stop()
+    }
+
+    override fun reconnect() {
+        // Mock sempre "connesso": ri-emette READY.
+        onEvent(mapOf("type" to "STATE", "v" to "READY", "backend" to "mock"))
     }
 
     override fun requestHrv(reqId: Int) {
@@ -315,6 +371,15 @@ internal class RealCiqBackend(
     }
 
     private fun refreshKnownDevices() {
+        // Unregistra i listener del device precedente PRIMA di riassegnare:
+        // senza questo, ogni reconnect/refresh accumulerebbe registrazioni
+        // duplicate (listener leak) e potrebbe consegnare eventi verso un
+        // handle stale.
+        device?.let { old ->
+            try { connectIq.unregisterForDeviceEvents(old) } catch (_: Throwable) {}
+            try { connectIq.unregisterForApplicationEvents(old, iqApp) } catch (_: Throwable) {}
+        }
+
         val devices: List<IQDevice> = try {
             connectIq.knownDevices ?: emptyList()
         } catch (t: Throwable) {
@@ -326,25 +391,72 @@ internal class RealCiqBackend(
         val first = devices.firstOrNull()
         device = first
         if (first != null) {
-            registerDeviceListeners(first)
-            onEvent(mapOf(
-                "type" to "STATE",
-                "v" to "READY",
-                "backend" to "real",
-                "device" to describeDevice(first),
-            ))
+            registerDeviceEvents(first)
+            registerAppEvents(first)
+            // Emettiamo lo stato REALE del device (non un READY incondizionato):
+            // knownDevices può contenere un watch accoppiato ma NON connesso.
+            emitDeviceState(first.status, describeDevice(first))
         } else {
             onEvent(mapOf("type" to "STATE", "v" to "NO_DEVICE", "backend" to "real"))
         }
     }
 
-    private fun registerDeviceListeners(dev: IQDevice) {
+    /**
+     * Traduce lo `IQDeviceStatus` grezzo del SDK nel vocabolario di protocollo
+     * che il lato Dart sa interpretare.
+     *
+     * CRITICO (root cause raw-device-status-maps-to-disconnected): prima si
+     * inoltrava `status.name` grezzo (CONNECTED / NOT_CONNECTED / NOT_PAIRED /
+     * UNKNOWN). Lo switch Dart riconosceva solo READY/ACTIVE/ERROR e mandava
+     * tutto il resto in `disconnected`: così un evento CONNECTED (orologio
+     * tornato raggiungibile!) faceva mostrare "Disconnesso" sul telefono.
+     *
+     * Mappatura:
+     *   CONNECTED                -> DEVICE_CONNECTED   (Dart: connected)
+     *   NOT_CONNECTED/NOT_PAIRED -> DEVICE_DISCONNECTED (Dart: disconnected)
+     *   UNKNOWN / null           -> nessun evento (transitorio: keep-current)
+     */
+    private fun emitDeviceState(
+        status: IQDevice.IQDeviceStatus?,
+        deviceInfo: Map<String, Any?>? = null,
+    ) {
+        when (status) {
+            IQDevice.IQDeviceStatus.CONNECTED ->
+                onEvent(mapOf(
+                    "type" to "STATE",
+                    "v" to "DEVICE_CONNECTED",
+                    "backend" to "real",
+                    "device" to deviceInfo,
+                ))
+            IQDevice.IQDeviceStatus.NOT_CONNECTED,
+            IQDevice.IQDeviceStatus.NOT_PAIRED ->
+                onEvent(mapOf("type" to "STATE", "v" to "DEVICE_DISCONNECTED", "backend" to "real"))
+            else ->
+                // UNKNOWN o null: stato transitorio, non forziamo disconnessione.
+                Log.i(GarminCiqBridge.TAG, "device status transient/ignored: ${status?.name}")
+        }
+    }
+
+    private fun registerDeviceEvents(dev: IQDevice) {
         try {
-            connectIq.registerForDeviceEvents(dev) { _, status ->
-                onEvent(mapOf("type" to "STATE", "v" to status.name))
+            connectIq.registerForDeviceEvents(dev) { d, status ->
+                Log.i(GarminCiqBridge.TAG, "deviceEvent ${d?.friendlyName} status=${status?.name}")
+                if (status == IQDevice.IQDeviceStatus.CONNECTED) {
+                    // Watch tornato raggiungibile dopo un drop BT: riaggancia il
+                    // handle e ri-registra gli app-events (idempotente) così gli
+                    // HR_SAMPLE riprendono a fluire senza riavviare l'app.
+                    device = dev
+                    registerAppEvents(dev)
+                }
+                emitDeviceState(status, describeDevice(dev))
             }
         } catch (_: InvalidStateException) {}
+    }
 
+    private fun registerAppEvents(dev: IQDevice) {
+        // Idempotente: unregister prima di register così chiamarla di nuovo su
+        // un reconnect non duplica le callback.
+        try { connectIq.unregisterForApplicationEvents(dev, iqApp) } catch (_: Throwable) {}
         try {
             connectIq.registerForAppEvents(dev, iqApp) { _, _, message, status ->
                 Log.i(GarminCiqBridge.TAG,
@@ -367,6 +479,22 @@ internal class RealCiqBackend(
         } catch (e: InvalidStateException) {
             Log.e(GarminCiqBridge.TAG, "registerForAppEvents InvalidStateException", e)
         }
+    }
+
+    override fun reconnect() {
+        Log.i(GarminCiqBridge.TAG, "reconnect requested (sdkReady=$sdkReady)")
+        if (!sdkReady) {
+            // SDK non ancora pronto: ritenta l'init. Se Garmin Connect Mobile
+            // manca, initialize rilancia e onInitializeError informa la UI.
+            try {
+                connectIq.initialize(context, true, sdkListener)
+            } catch (t: Throwable) {
+                Log.e(GarminCiqBridge.TAG, "reconnect: initialize failed", t)
+                onEvent(mapOf("type" to "STATE", "v" to "ERROR", "msg" to (t.message ?: "init failed")))
+            }
+            return
+        }
+        refreshKnownDevices()
     }
 
     override fun start(hz: Int, pacer: Map<String, Any?>) {
@@ -442,7 +570,38 @@ internal class RealCiqBackend(
     }
 
     override fun stop() {
+        // Stop "leggero": sendMessage diretto, niente openApplication → niente
+        // dialog. Funziona quando l'app sul watch è in foreground (caso normale).
+        // Se il watch è tornato al watchface il messaggio si perde; il phone non
+        // riceve l'ACK STATE:READY(stopped) e ricade su forceStop().
         sendToWatch(mapOf("type" to "STOP_SESSION"))
+    }
+
+    override fun forceStop() {
+        Log.i(GarminCiqBridge.TAG, "forceStop: openApplication-backed STOP_SESSION")
+        val dev = device
+        if (dev == null) {
+            Log.w(GarminCiqBridge.TAG, "forceStop senza device disponibile")
+            onEvent(mapOf("type" to "STATE", "v" to "NO_DEVICE"))
+            return
+        }
+        val payload = mapOf<String, Any?>("type" to "STOP_SESSION")
+        // openApplication riporta in foreground l'app CIQ se era stata
+        // backgroundata (watchface timeout): solo così lo STOP arriva e
+        // l'orologio smette di campionare. Su app già attiva ritorna
+        // APP_IS_ALREADY_RUNNING senza prompt.
+        try {
+            connectIq.openApplication(dev, iqApp) { _, _, status ->
+                Log.i(GarminCiqBridge.TAG, "forceStop openApp status=${status.name}")
+                if (status.name == "APP_IS_ALREADY_RUNNING") {
+                    lastWatchActivityMs = System.currentTimeMillis()
+                }
+                sendToWatch(payload)
+            }
+        } catch (t: Throwable) {
+            Log.e(GarminCiqBridge.TAG, "forceStop openApplication failed, send diretto", t)
+            sendToWatch(payload)
+        }
     }
 
     override fun requestHrv(reqId: Int) {

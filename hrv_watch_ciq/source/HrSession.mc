@@ -192,23 +192,36 @@ class HrSession {
         var meanHr = (mBpmCount > 0) ? (mBpmSum / mBpmCount).toNumber() : 0;
         var sdnn = 0;
         var rmssd = 0;
-        if (n >= 10) {
+        // Gate fisiologico (300-2000 ms) + anti-spike (|delta|>250 ms) PRIMA
+        // delle statistiche: un singolo HR sample droppato/spurio gonfierebbe
+        // RMSSD/SDNN, mostrati standalone e usati come seed lato telefono.
+        var clean = [];
+        var prevc = null;
+        for (var c = 0; c < n; c++) {
+            var v = mRrList[c];
+            if (v < 300 || v > 2000) { continue; }
+            if (prevc != null && (v - prevc).abs() > 250) { continue; }
+            clean.add(v);
+            prevc = v;
+        }
+        var cn = clean.size();
+        if (cn >= 10) {
             var sum = 0;
-            for (var i = 0; i < n; i++) { sum += mRrList[i]; }
-            var mean = sum.toFloat() / n;
+            for (var i = 0; i < cn; i++) { sum += clean[i]; }
+            var mean = sum.toFloat() / cn;
             var sq = 0.0;
-            for (var j = 0; j < n; j++) {
-                var d = mRrList[j] - mean;
+            for (var j = 0; j < cn; j++) {
+                var d = clean[j] - mean;
                 sq += d * d;
             }
             // Sample stdev (n-1) per coerenza con la letteratura HRV.
-            sdnn = Math.sqrt(sq / (n - 1)).toNumber();
+            sdnn = Math.sqrt(sq / (cn - 1)).toNumber();
             var sqd = 0.0;
-            for (var k = 1; k < n; k++) {
-                var dk = mRrList[k] - mRrList[k - 1];
+            for (var k = 1; k < cn; k++) {
+                var dk = clean[k] - clean[k - 1];
                 sqd += dk * dk;
             }
-            rmssd = Math.sqrt(sqd / (n - 1)).toNumber();
+            rmssd = Math.sqrt(sqd / (cn - 1)).toNumber();
         }
         // durationMs.toLong() forza somma in 64-bit così endMs non rischia
         // overflow (durationMs è Number ma 1.76e12 + 1.2e6 va calcolato Long).
@@ -295,4 +308,9 @@ class HrSession {
 
     function isActive() { return mActive; }
     function isLocal() { return mIsLocal; }
+
+    // Epoch ms d'avvio dell'ultima sessione (resta valorizzato anche dopo lo
+    // stop, fino al prossimo start). Usato come chiave di correlazione
+    // nell'ACK STATE:READY(stopped) verso il telefono.
+    function getStartEpochMs() { return mStartEpochMs; }
 }

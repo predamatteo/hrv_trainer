@@ -107,21 +107,29 @@ class HrvTrainerApp extends App.AppBase {
 
     function requestStop() {
         Sys.println("requestStop: enter");
-        if (!mSession.isActive()) {
-            Sys.println("requestStop: not active, exit");
-            return;
-        }
+        // ACK idempotente: anche se la sessione è già ferma (es. auto-stop del
+        // countdown del watch avvenuto PRIMA che arrivasse lo STOP dal telefono)
+        // dobbiamo comunque rispondere, altrimenti l'handshake di stop lato
+        // phone va in timeout e scatta un forceStop inutile. Catturiamo startMs
+        // PRIMA di fermare, per correlare l'ACK alla sessione.
+        var wasActive = mSession.isActive();
+        var startMs = mSession.getStartEpochMs();
         var summary = null;
-        try {
-            summary = mSession.stopIfActive();
-        } catch (ex) {
-            Sys.println("requestStop: session stop FAIL " + ex.getErrorMessage());
+        if (wasActive) {
+            try {
+                summary = mSession.stopIfActive();
+            } catch (ex) {
+                Sys.println("requestStop: session stop FAIL " + ex.getErrorMessage());
+            }
+            if (mView != null) {
+                try { mView.stopSession(); }
+                catch (ex) { Sys.println("requestStop: view stop FAIL " + ex.getErrorMessage()); }
+            }
+        } else {
+            Sys.println("requestStop: already stopped, idempotent ACK");
         }
-        if (mView != null) {
-            try { mView.stopSession(); }
-            catch (ex) { Sys.println("requestStop: view stop FAIL " + ex.getErrorMessage()); }
-        }
-        sendPhone({ "type" => "STATE", "v" => "READY" });
+        // stopped:true + startMs → il phone chiude l'handshake di stop.
+        sendPhone({ "type" => "STATE", "v" => "READY", "stopped" => true, "startMs" => startMs });
         if (summary != null) {
             // 1) Persistiamo SEMPRE prima di trasmettere: se BT è giù,
             //    Comm.transmit fallisce ma il summary resta in Storage e
@@ -175,6 +183,14 @@ class HrvTrainerApp extends App.AppBase {
         return mSession != null && mSession.isActive();
     }
 
+    // True se è attiva una sessione GUIDATA dal telefono (non standalone GPS).
+    // Usato dal watchdog "perdita telefono" nella View: una sessione standalone
+    // deve continuare anche senza telefono, una phone-driven no (il telefono è
+    // il system of record e, se è sparito, campionare a vuoto spreca batteria).
+    function isPhoneDrivenActive() {
+        return mSession != null && mSession.isActive() && !mSession.isLocal();
+    }
+
     // Esposto per il delegate, che lo usa per pilotare la state machine UI
     // del pannello CONFIG (enter/exit/select/nudge). Tenuto qui invece di
     // far accedere `mView` direttamente, così se in futuro la View viene
@@ -204,6 +220,28 @@ class HrvTrainerApp extends App.AppBase {
             // FIT in Garmin Connect. Default false (storico già su phone).
             var recFit = d["recordFit"];
             if (recFit == null) { recFit = false; }
+            // Reset su re-START: se una sessione è ancora attiva (es. la
+            // precedente non è stata fermata perché lo STOP si era perso),
+            // chiudiamola PULITAMENTE prima di iniziare. Senza questo,
+            // mSession.start early-returna senza resettare mStartMs/buffer e il
+            // primo HR_SAMPLE della nuova sessione porterebbe il countdown del
+            // phone a ~0 (elapsedMs stale → fine immediata).
+            if (mSession.isActive()) {
+                Sys.println("START_SESSION while active: reset previous session");
+                if (mSession.isLocal()) {
+                    // Standalone in corso: salviamone il summary prima di chiudere.
+                    var prev = null;
+                    try { prev = mSession.stopIfActive(); }
+                    catch (ex) { Sys.println("reset: stopIfActive FAIL " + ex.getErrorMessage()); }
+                    if (prev != null) {
+                        try { PendingStore.add(prev); } catch (ex) {}
+                        sendPhone(prev);
+                    }
+                } else {
+                    try { mSession.discardIfActive(); }
+                    catch (ex) { Sys.println("reset: discard FAIL " + ex.getErrorMessage()); }
+                }
+            }
             mSession.start(hz, recFit);
             // phoneTxMs: epoch ms del phone catturato lato bridge Kotlin
             // immediatamente prima di sendMessage. Ritrasmesso in ogni

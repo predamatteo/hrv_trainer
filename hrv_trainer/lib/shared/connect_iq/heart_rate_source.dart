@@ -36,7 +36,12 @@ class HeartRateEvent {
 }
 
 /// Stato di connessione con la sorgente HR.
-enum HrSourceState { disconnected, connecting, connected, error }
+///
+/// [noDevice] è distinto da [disconnected]: significa che il SDK è pronto ma
+/// non vede alcun orologio accoppiato/raggiungibile (knownDevices vuoto). La
+/// UI lo usa per offrire un'azione "Cerca orologio" invece del generico
+/// "Connetti", e per non confondere "BT a posto ma watch spento" con "errore".
+enum HrSourceState { disconnected, connecting, connected, noDevice, error }
 
 /// Astrazione per qualunque sorgente di battito cardiaco:
 /// - Connect IQ (app Monkey C sull'Instinct Solar 2X)
@@ -71,6 +76,15 @@ abstract class HeartRateSource {
 
   /// Ferma la sessione.
   Future<void> stop();
+
+  /// Ri-aggancio esplicito al dispositivo: ri-scansiona i device noti,
+  /// riassegna il handle e ri-registra i listener lato nativo. Da chiamare
+  /// quando l'utente preme "Connetti"/"Riconnetti" o al resume dell'app, per
+  /// recuperare un handle stale dopo un drop/ripristino BT senza riavviare.
+  ///
+  /// Default no-op per sorgenti che non hanno un device (mock/BLE diretto
+  /// ridefiniscono per segnalarsi connesse).
+  Future<void> reconnect() async {}
 
   /// Richiede una misura HRV puntuale (l'Instinct Solar 2X non espone RR in
   /// stream continuo, ma restituisce una stima HRV se richiesta esplicitamente).

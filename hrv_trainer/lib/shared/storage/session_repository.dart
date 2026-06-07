@@ -6,6 +6,7 @@ import 'package:sqflite/sqflite.dart';
 import '../connect_iq/remote_session_summary.dart';
 import '../hrv/breathing_pacer.dart';
 import '../hrv/hrv_metrics.dart';
+import '../hrv/morning_reading.dart';
 import '../hrv/rr_interval.dart';
 import '../hrv/session_models.dart';
 import 'database.dart';
@@ -24,6 +25,8 @@ class SessionRepository {
         'pattern_json': jsonEncode(s.pattern.toJson()),
         'metrics_json': jsonEncode(s.metrics.toJson()),
         'notes': s.notes,
+        'morning_meta_json':
+            s.morning == null ? null : jsonEncode(s.morning!.toJson()),
       });
       final batch = txn.batch();
       for (final rr in samples) {
@@ -183,6 +186,18 @@ class SessionRepository {
 
   Session _rowToSession(Map<String, Object?> row) {
     final tagName = row['tag'] as String? ?? 'general';
+    // morning_meta_json può mancare (colonna assente in DB pre-v3 letti da un
+    // backup, o NULL per sessioni non-morning): in quei casi morning resta null.
+    final morningRaw = row['morning_meta_json'] as String?;
+    MorningMeta? morning;
+    if (morningRaw != null && morningRaw.isNotEmpty) {
+      try {
+        morning =
+            MorningMeta.fromJson(jsonDecode(morningRaw) as Map<String, dynamic>);
+      } catch (_) {
+        morning = null;
+      }
+    }
     return Session(
       id: row['id'] as int,
       kind: SessionKind.values.firstWhere((k) => k.name == row['kind']),
@@ -199,6 +214,7 @@ class SessionRepository {
         jsonDecode(row['metrics_json'] as String) as Map<String, dynamic>,
       ),
       notes: row['notes'] as String?,
+      morning: morning,
     );
   }
 
@@ -233,7 +249,11 @@ class SessionRepository {
 
   /// Schema corrente del file di backup. Bumppare ad ogni breaking change
   /// del formato (rinomina campi DB, rimozione enum value, ecc.).
-  static const exportSchemaVersion = 1;
+  ///
+  /// v2: aggiunto `morningMetaJson` per le letture Morning Readiness. Additivo
+  /// e retro-compatibile — i backup v1 (senza il campo) si importano
+  /// regolarmente con morning=null.
+  static const exportSchemaVersion = 2;
 
   /// Serializza l'intero storico (sessioni + RR samples + assessments) in
   /// JSON pronto per condivisione tramite share sheet.
@@ -270,6 +290,7 @@ class SessionRepository {
         'patternJson': s['pattern_json'],
         'metricsJson': s['metrics_json'],
         'notes': s['notes'],
+        'morningMetaJson': s['morning_meta_json'],
         'rrSamples': rrBySession[id] ?? const <Map<String, Object?>>[],
       };
     }).toList();
@@ -340,6 +361,8 @@ class SessionRepository {
           'pattern_json': s['patternJson'],
           'metrics_json': s['metricsJson'],
           'notes': s['notes'],
+          // null per backup v1 (campo assente) → import retro-compatibile.
+          'morning_meta_json': s['morningMetaJson'],
         });
 
         final rr = (s['rrSamples'] as List?) ?? const [];

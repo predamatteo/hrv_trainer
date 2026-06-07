@@ -89,6 +89,14 @@ class MockHeartRateSource implements HeartRateSource {
   }
 
   @override
+  Future<void> reconnect() async {
+    // Mock sempre raggiungibile: simula un breve handshake e si dichiara connesso.
+    _setState(HrSourceState.connecting);
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    _setState(HrSourceState.connected);
+  }
+
+  @override
   Future<HrvOnDemandResult?> requestHrvOnDemand() async {
     await Future<void>.delayed(const Duration(seconds: 1));
     final rr = List.generate(60, (_) {

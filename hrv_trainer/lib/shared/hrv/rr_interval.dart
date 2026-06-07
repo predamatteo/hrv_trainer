@@ -18,20 +18,12 @@ class RrInterval {
       );
 }
 
-/// Utilità di filtering: rimuove artefatti e battiti ectopici secondo il
-/// criterio Malik (variazione > 20% rispetto al precedente).
-extension RrCleaning on List<RrInterval> {
-  List<RrInterval> cleaned() {
-    final out = <RrInterval>[];
-    for (final rr in this) {
-      if (!rr.isPhysiological) continue;
-      if (out.isNotEmpty) {
-        final prev = out.last.ms;
-        final diff = (rr.ms - prev).abs() / prev;
-        if (diff > 0.20) continue;
-      }
-      out.add(rr);
-    }
-    return out;
-  }
+/// Punto del trace HR live: BPM istantaneo + timestamp del beat. Il timestamp
+/// serve a graficare l'HR su un asse temporale reale. Usato sia dal training
+/// (con sovrapposizione del pacer) sia dal morning check-in (curva HR spontanea
+/// = visualizzazione della RSA).
+class HrTracePoint {
+  final DateTime timestamp;
+  final int bpm;
+  const HrTracePoint({required this.timestamp, required this.bpm});
 }

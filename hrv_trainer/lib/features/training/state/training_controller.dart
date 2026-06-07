@@ -8,18 +8,10 @@ import '../../../shared/hrv/breathing_pacer.dart';
 import '../../../shared/hrv/hrv_metrics.dart';
 import '../../../shared/hrv/rr_interval.dart';
 import '../../../shared/hrv/session_models.dart';
+import '../../../shared/notifications/reminder_settings.dart';
 import '../../../shared/storage/session_repository.dart';
 import '../../history/history_screen.dart' show sessionsListProvider;
 import '../../home/state/readiness_provider.dart';
-
-/// Punto del trace HR live: BPM istantaneo + timestamp del beat.
-/// Il timestamp serve a graficare l'HR su un asse temporale reale e a
-/// sovrapporre la curva del pacer respiratorio per visualizzare la RSA.
-class HrTracePoint {
-  final DateTime timestamp;
-  final int bpm;
-  const HrTracePoint({required this.timestamp, required this.bpm});
-}
 
 class TrainingState {
   final bool running;
@@ -184,7 +176,14 @@ class TrainingController extends StateNotifier<TrainingState> {
     // produce il primo battito. Senza questa correzione il countdown del
     // phone risultava sempre 3-5 s indietro rispetto al watch.
     if (state.running && state.startedAt == null) {
-      final elapsedMs = e.watchElapsedMs;
+      // Guardia anti-sample-stale: un HR_SAMPLE il cui watchElapsedMs supera la
+      // durata target non può appartenere a QUESTA sessione appena avviata — è
+      // un residuo del loop sensori del watch non resettato (vedi reset su
+      // re-START lato Monkey C). Anchorare il countdown su di esso lo porterebbe
+      // a ~0, chiudendo subito la sessione. In quel caso ripartiamo da adesso.
+      final raw = e.watchElapsedMs;
+      final maxMs = state.targetDurationSec * 1000;
+      final elapsedMs = (raw != null && raw >= 0 && raw <= maxMs) ? raw : null;
       final t0 = elapsedMs != null
           ? DateTime.now().subtract(Duration(milliseconds: elapsedMs))
           : DateTime.now();
@@ -256,6 +255,11 @@ class TrainingController extends StateNotifier<TrainingState> {
     // sessioni avviate dal watch.
     ref.invalidate(sessionsListProvider);
     ref.invalidate(readinessProvider);
+
+    // Modalità promemoria "smart skip": ora che oggi risulta allenato,
+    // riallinea lo scheduling così l'eventuale promemoria odierno successivo
+    // viene saltato. Fire-and-forget; no-op se la modalità skip è off.
+    unawaited(ref.read(reminderControllerProvider.notifier).refresh());
 
     // Aggiorna running:false e lastSessionId nello stesso emit così che il
     // ref.listen della TrainingScreen possa decidere subito dove navigare
