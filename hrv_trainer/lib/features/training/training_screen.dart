@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -8,6 +7,8 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../shared/hrv/breathing_pacer.dart';
 import '../../shared/hrv/session_models.dart';
+import '../../shared/hrv/widgets/live_session_view.dart';
+import '../../shared/storage/session_repository.dart';
 import '../pacer/state/pacer_controller.dart';
 import '../pacer/widgets/breathing_orb.dart';
 import 'state/training_controller.dart';
@@ -27,6 +28,14 @@ class _TrainingScreenState extends ConsumerState<TrainingScreen>
   late int _durationMin;
   late SessionTag _tag;
 
+  /// Frequenza di risonanza personale dall'ultimo assessment (resp/min), se
+  /// disponibile: diventa il default del respiro per i contesti a ~6 bpm.
+  double? _resonanceBpm;
+
+  /// True dopo che l'utente tocca lo slider del respiro: evita che il caricamento
+  /// asincrono della RF sovrascriva una scelta manuale.
+  bool _patternTouched = false;
+
   @override
   void dispose() {
     // Sicurezza: se l'utente esce con back system, assicurati che il
@@ -40,6 +49,19 @@ class _TrainingScreenState extends ConsumerState<TrainingScreen>
     super.initState();
     _tag = widget.initialTag;
     _applyTagDefaults();
+    _loadResonance();
+  }
+
+  /// Carica la RF personale dall'ultimo assessment e, se l'utente non ha ancora
+  /// toccato lo slider, riapplica i default così i contesti a ~6 bpm partono
+  /// dalla risonanza personale invece che dai 6.0 generici.
+  Future<void> _loadResonance() async {
+    final rf = await ref.read(sessionRepositoryProvider).latestResonanceBpm();
+    if (!mounted || rf == null) return;
+    setState(() {
+      _resonanceBpm = rf;
+      if (!_patternTouched) _applyTagDefaults();
+    });
   }
 
   // Quando l'utente cambia tag aggiorniamo pattern e durata ai default del
@@ -47,7 +69,15 @@ class _TrainingScreenState extends ConsumerState<TrainingScreen>
   // slider restano modificabili dopo: il tag fornisce un punto di partenza
   // sensato, non un vincolo.
   void _applyTagDefaults() {
-    _pattern = _tag.defaultPattern;
+    final base = _tag.defaultPattern;
+    // Per i contesti la cui andatura di default è la risonanza generica
+    // (~6 bpm) usa la RF personale dall'assessment, se disponibile. I contesti
+    // volutamente più lenti (sleep 5.0, stress/recovery 5.5) mantengono la loro
+    // andatura, che è una scelta clinica e non la RF.
+    final rf = _resonanceBpm;
+    _pattern = (rf != null && base.breathsPerMinute >= 6.0)
+        ? BreathingPattern.fromBpm(rf)
+        : base;
     _durationMin = _tag.defaultDurationMin;
   }
 
@@ -120,7 +150,7 @@ class _TrainingScreenState extends ConsumerState<TrainingScreen>
       },
       child: Scaffold(
         appBar: AppBar(
-          title: const _TrainingTimerTitle(),
+          title: const _TrainingTitle(),
           actions: [
             IconButton(
               icon: const Icon(Icons.stop_circle_outlined),
@@ -135,28 +165,184 @@ class _TrainingScreenState extends ConsumerState<TrainingScreen>
             )
           ],
         ),
-        body: Column(
-          children: [
-            const SizedBox(height: 12),
-            const _TrainingProgressBar(),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  children: const [
-                    Expanded(flex: 3, child: Center(child: _OrbView())),
-                    Expanded(
-                      flex: 3,
-                      child: Column(
-                        children: [
-                          Expanded(child: _HrLiveChart()),
-                          SizedBox(height: 8),
-                          _LiveMetrics(),
-                        ],
-                      ),
-                    ),
+        // Stesso layout della misura morning check-in: status → countdown →
+        // BPM → grafico HR (Expanded) → statistiche. L'UNICA aggiunta è l'orb
+        // del respiro guida in cima (rimpicciolito).
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 12, 24, 16),
+            // L'orb è dimensionato sull'altezza disponibile (cap 160): su
+            // schermi bassi (split-screen, testo ingrandito) si rimpicciolisce
+            // da solo così il readout sotto non manda la Column in overflow.
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final orbSize =
+                    (constraints.maxHeight * 0.24).clamp(96.0, 160.0);
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Indicatore inspira/espira: unico elemento in più rispetto
+                    // al morning check-in.
+                    Center(child: _OrbView(size: orbSize)),
+                    const SizedBox(height: 8),
+                    const _TrainingStatus(),
+                    const SizedBox(height: 20),
+                    const _TrainingCountdown(),
+                    const SizedBox(height: 16),
+                    const _TrainingBpm(),
+                    const SizedBox(height: 16),
+                    const Expanded(child: _TrainingChart()),
+                    const SizedBox(height: 16),
+                    const _TrainingStats(),
                   ],
-                ),
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSetup(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final bpm = _pattern.breathsPerMinute;
+    return Scaffold(
+      appBar: AppBar(title: const Text('Nuova sessione')),
+      body: SafeArea(
+        child: Column(
+          children: [
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                children: [
+                  // ── Contesto: scelta primaria, precompila respiro e durata ──
+                  Text('Contesto', style: theme.textTheme.titleMedium),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final t in SessionTag.values)
+                        ChoiceChip(
+                          avatar: Icon(
+                            _tagIcon(t),
+                            size: 18,
+                            color: _tag == t
+                                ? scheme.onSecondaryContainer
+                                : scheme.onSurfaceVariant,
+                          ),
+                          label: Text(t.label),
+                          selected: _tag == t,
+                          onSelected: (_) => setState(() {
+                            _tag = t;
+                            _patternTouched = false;
+                            _applyTagDefaults();
+                          }),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  // Razionale del contesto scelto, ben visibile.
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color:
+                          scheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(_tagIcon(_tag), size: 18, color: scheme.primary),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _tag.rationale,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: scheme.onSurfaceVariant,
+                              height: 1.35,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  // ── Imposta: default del contesto, regolabili ──
+                  Row(
+                    children: [
+                      Text('Imposta', style: theme.textTheme.titleMedium),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'pre-compilati dal contesto, regolabili',
+                          style: theme.textTheme.labelSmall
+                              ?.copyWith(color: scheme.onSurfaceVariant),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  _SettingHeader(
+                    label: 'Respiro',
+                    value: '${bpm.toStringAsFixed(1)} resp/min',
+                    hint: '≈ frequenza di risonanza',
+                  ),
+                  Slider(
+                    min: 4.0,
+                    max: 8.0,
+                    divisions: 16,
+                    value: bpm,
+                    label: bpm.toStringAsFixed(1),
+                    onChanged: (v) => setState(() {
+                      _patternTouched = true;
+                      _pattern = BreathingPattern.fromBpm(v);
+                    }),
+                  ),
+                  const SizedBox(height: 12),
+                  _SettingHeader(label: 'Durata', value: '$_durationMin min'),
+                  Slider(
+                    min: 1,
+                    max: 30,
+                    divisions: 29,
+                    value: _durationMin.toDouble(),
+                    label: '$_durationMin min',
+                    onChanged: (v) => setState(() => _durationMin = v.toInt()),
+                  ),
+                  if (_resonanceBpm == null) ...[
+                    const SizedBox(height: 12),
+                    _AssessmentHint(onTap: () => context.push('/assessment')),
+                  ],
+                ],
+              ),
+            ),
+            // ── CTA pinnata in basso, sempre visibile ──
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      icon: const Icon(Icons.play_arrow),
+                      label: Text(
+                        'Avvia • $_durationMin min a '
+                        '${bpm.toStringAsFixed(1)} resp/min',
+                      ),
+                      onPressed: _onStart,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Si sincronizza con l\'orologio all\'avvio',
+                    style: theme.textTheme.labelSmall
+                        ?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
+                ],
               ),
             ),
           ],
@@ -165,87 +351,29 @@ class _TrainingScreenState extends ConsumerState<TrainingScreen>
     );
   }
 
-  Widget _buildSetup(BuildContext context) {
-    final theme = Theme.of(context);
-    return Scaffold(
-      appBar: AppBar(title: const Text('Nuova sessione di training')),
-      body: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text('Frequenza respiro',
-                style: theme.textTheme.titleMedium),
-            Slider(
-              min: 4.0,
-              max: 8.0,
-              divisions: 16,
-              value: _pattern.breathsPerMinute,
-              label: _pattern.breathsPerMinute.toStringAsFixed(1),
-              onChanged: (v) => setState(
-                  () => _pattern = BreathingPattern.fromBpm(v)),
-            ),
-            const SizedBox(height: 16),
-            Text('Durata',
-                style: theme.textTheme.titleMedium),
-            Slider(
-              min: 1,
-              max: 30,
-              divisions: 29,
-              value: _durationMin.toDouble(),
-              label: '$_durationMin min',
-              onChanged: (v) => setState(() => _durationMin = v.toInt()),
-            ),
-            const SizedBox(height: 16),
-            Text('Contesto', style: theme.textTheme.titleMedium),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 4,
-              children: SessionTag.values.map((t) {
-                return ChoiceChip(
-                  label: Text(t.label),
-                  selected: _tag == t,
-                  onSelected: (_) => setState(() {
-                    _tag = t;
-                    _applyTagDefaults();
-                  }),
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              _tag.rationale,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const Spacer(),
-            FilledButton.icon(
-              icon: const Icon(Icons.play_arrow),
-              label: Text('Avvia $_durationMin min a '
-                  '${_pattern.breathsPerMinute.toStringAsFixed(1)} bpm'),
-              onPressed: () async {
-                debugPrint('[TRAIN] Avvia pressed');
-                ref.read(pacerPreferencesProvider.notifier).state =
-                    ref.read(pacerPreferencesProvider).copyWith(
-                          pattern: _pattern,
-                        );
-                await ref
-                    .read(trainingControllerProvider.notifier)
-                    .start(_pattern,
-                        targetDurationSec: _durationMin * 60, tag: _tag);
-                // Il pacer NON parte qui: viene avviato dal ref.listen più in
-                // alto quando arriva il primo HR sample dal watch, così che
-                // ciclo ispira/espira sul phone e sul watch siano allineati.
-                debugPrint('[TRAIN] training started, pacer waiting for watch');
-              },
-            ),
-          ],
-        ),
-      ),
-    );
+  Future<void> _onStart() async {
+    debugPrint('[TRAIN] Avvia pressed');
+    ref.read(pacerPreferencesProvider.notifier).state =
+        ref.read(pacerPreferencesProvider).copyWith(pattern: _pattern);
+    await ref.read(trainingControllerProvider.notifier).start(
+          _pattern,
+          targetDurationSec: _durationMin * 60,
+          tag: _tag,
+        );
+    // Il pacer NON parte qui: lo avvia il ref.listen quando arriva il primo HR
+    // sample dal watch, così ciclo ispira/espira su phone e watch combaciano.
+    debugPrint('[TRAIN] training started, pacer waiting for watch');
   }
+
+  IconData _tagIcon(SessionTag t) => switch (t) {
+        SessionTag.morning => Icons.wb_sunny_outlined,
+        SessionTag.preWorkout => Icons.fitness_center,
+        SessionTag.postWorkout => Icons.ac_unit,
+        SessionTag.sleep => Icons.bedtime_outlined,
+        SessionTag.stress => Icons.bolt_outlined,
+        SessionTag.recovery => Icons.spa_outlined,
+        SessionTag.general => Icons.tune,
+      };
 
   Future<bool?> _confirmStop() => showDialog<bool>(
         context: context,
@@ -268,352 +396,217 @@ class _TrainingScreenState extends ConsumerState<TrainingScreen>
 
 }
 
-class _HrLiveChart extends ConsumerWidget {
-  const _HrLiveChart();
+/// Intestazione di una riga di impostazione: etichetta a sinistra, valore in
+/// evidenza a destra, hint opzionale sotto. Usata per Respiro e Durata nel setup.
+class _SettingHeader extends StatelessWidget {
+  final String label;
+  final String value;
+  final String? hint;
+  const _SettingHeader({required this.label, required this.value, this.hint});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(label, style: theme.textTheme.titleSmall),
+            ),
+            Text(
+              value,
+              style: theme.textTheme.titleMedium?.copyWith(
+                color: scheme.primary,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+        if (hint != null)
+          Text(
+            hint!,
+            style: theme.textTheme.labelSmall
+                ?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+      ],
+    );
+  }
+}
+
+/// Suggerimento mostrato nel setup quando manca una RF personale: invita a fare
+/// l'Assessment così il respiro può partire dalla frequenza di risonanza reale.
+class _AssessmentHint extends StatelessWidget {
+  final VoidCallback onTap;
+  const _AssessmentHint({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: scheme.primaryContainer.withValues(alpha: 0.35),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.tune, size: 18, color: scheme.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Non hai ancora la tua frequenza di risonanza: fai '
+                'l\'Assessment per personalizzare il respiro.',
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: scheme.onSurfaceVariant, height: 1.3),
+              ),
+            ),
+            Icon(Icons.chevron_right, color: scheme.onSurfaceVariant),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Titolo AppBar calmo, come nel morning check-in. Cambia solo allo scatto del
+/// primo HR sample (startedAt fissato), quindi basta un watch sul flag.
+class _TrainingTitle extends ConsumerWidget {
+  const _TrainingTitle();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final waiting = ref.watch(
+      trainingControllerProvider.select((s) => s.startedAt == null),
+    );
+    return Text(waiting ? 'Allenamento • avvio…' : 'Allenamento');
+  }
+}
+
+/// Riga di stato sopra il countdown. Parallela al morning check-in: in attesa
+/// dell'allineamento col watch invita a prepararsi, poi a seguire il respiro.
+class _TrainingStatus extends ConsumerWidget {
+  const _TrainingStatus();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final waiting = ref.watch(
+      trainingControllerProvider.select((s) => s.startedAt == null),
+    );
+    return Text(
+      waiting ? 'Avvio sul watch… stai pronto' : 'Segui il respiro guida',
+      textAlign: TextAlign.center,
+      style: theme.textTheme.titleMedium?.copyWith(
+        color: scheme.onSurfaceVariant,
+      ),
+    );
+  }
+}
+
+/// Countdown grande nel body (come il morning check-in). Si auto-aggiorna ogni
+/// secondo via Timer interno invece di dipendere dal rebuild del controller
+/// (che cambia ad ogni HR sample). Mostra il tempo residuo; finché il watch non
+/// si allinea (startedAt == null) resta in grigio sulla durata piena.
+class _TrainingCountdown extends ConsumerStatefulWidget {
+  const _TrainingCountdown();
+
+  @override
+  ConsumerState<_TrainingCountdown> createState() => _TrainingCountdownState();
+}
+
+class _TrainingCountdownState extends ConsumerState<_TrainingCountdown> {
+  Timer? _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    _ticker = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => setState(() {}),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final st = ref.read(trainingControllerProvider);
+    if (st.startedAt == null) {
+      // In attesa dell'allineamento col watch: durata piena, in grigio.
+      return BigCountdown(secLeft: st.targetDurationSec, muted: true);
+    }
+    final remaining = Duration(seconds: st.targetDurationSec) - st.elapsed;
+    final remSec = remaining.isNegative ? 0 : remaining.inSeconds;
+    return BigCountdown(secLeft: remSec);
+  }
+}
+
+/// BPM corrente: ultimo battito ricevuto dal watch. Watcha solo l'ultimo bpm
+/// del trace così rebuilda ~1 Hz, non al ritmo del pacer.
+class _TrainingBpm extends ConsumerWidget {
+  const _TrainingBpm();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final bpm = ref.watch(
+      trainingControllerProvider.select(
+        (s) => s.hrTrace.isEmpty ? null : s.hrTrace.last.bpm,
+      ),
+    );
+    return LiveBpmRow(bpm: bpm);
+  }
+}
+
+/// Grafico HR live con overlay del respiro guida. Stesso widget condiviso del
+/// morning check-in, ma con [pacer] valorizzato così disegna la curva guida
+/// tratteggiata + legenda.
+class _TrainingChart extends ConsumerWidget {
+  const _TrainingChart();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final st = ref.watch(trainingControllerProvider);
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    // Header (BPM, range, swing) si attiva con 1 punto.
-    // Il chart vero richiede ≥2 punti, altrimenti minX == maxX e fl_chart
-    // asserta. Sotto soglia, placeholder "In attesa…".
-    final hasAny = st.hrTrace.isNotEmpty && st.startedAt != null;
-    final canChart = st.hrTrace.length >= 2 && st.startedAt != null;
-
-    int? currentBpm, dataMin, dataMax, swing;
-    if (hasAny) {
-      currentBpm = st.hrTrace.last.bpm;
-      final bpms = st.hrTrace.map((p) => p.bpm);
-      dataMin = bpms.reduce((a, b) => a < b ? a : b);
-      dataMax = bpms.reduce((a, b) => a > b ? a : b);
-      final from30 =
-          st.hrTrace.last.timestamp.subtract(const Duration(seconds: 30));
-      final last30 =
-          st.hrTrace.where((p) => p.timestamp.isAfter(from30)).toList();
-      if (last30.length >= 2) {
-        final mn = last30.map((p) => p.bpm).reduce((a, b) => a < b ? a : b);
-        final mx = last30.map((p) => p.bpm).reduce((a, b) => a > b ? a : b);
-        swing = mx - mn;
-      }
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _ChartHeader(
-          currentBpm: currentBpm,
-          swing: swing,
-          range: dataMin == null ? null : '$dataMin–$dataMax',
-        ),
-        const SizedBox(height: 2),
-        _ChartLegend(scheme: scheme, textTheme: theme.textTheme),
-        const SizedBox(height: 4),
-        Expanded(
-          child: canChart
-              ? _buildChart(theme, scheme, st)
-              : Center(
-                  child: Text(
-                    'In attesa del watch…',
-                    style: theme.textTheme.bodySmall,
-                  ),
-                ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildChart(ThemeData theme, ColorScheme scheme, TrainingState st) {
-    final start = st.startedAt!;
-    final pts = st.hrTrace;
-    final spots = [
-      for (final p in pts)
-        FlSpot(
-          p.timestamp.difference(start).inMilliseconds / 1000.0,
-          p.bpm.toDouble(),
-        ),
-    ];
-    final bpms = pts.map((p) => p.bpm).toList();
-    final dataMin = bpms.reduce((a, b) => a < b ? a : b);
-    final dataMax = bpms.reduce((a, b) => a > b ? a : b);
-    final pad = ((dataMax - dataMin) * 0.2).clamp(3, 10).toDouble();
-    final yMin = (dataMin - pad).floorToDouble();
-    final yMax = (dataMax + pad).ceilToDouble();
-    final yMid = (yMin + yMax) / 2;
-    final halfRange = (yMax - yMin) * 0.4;
-
-    final xMin = spots.first.x;
-    final xMax = spots.last.x;
-    final span = (xMax - xMin) <= 0 ? 1.0 : (xMax - xMin);
-
-    // Sovrapposizione respiro: campiona la curva del pacer e la mappa nel
-    // range Y così che HR e respiro siano visivamente confrontabili.
-    final breathSpots = <FlSpot>[];
-    const n = 150;
-    for (int i = 0; i <= n; i++) {
-      final t = xMin + span * i / n;
-      final amp = pacerAt(st.pattern, t).amplitude; // 0..1
-      final y = yMid + (amp - 0.5) * 2 * halfRange;
-      breathSpots.add(FlSpot(t, y));
-    }
-
-    final yRange = yMax - yMin;
-    // interval in [1, range] per evitare assertion fl_chart (interval > range).
-    final yInterval = (yRange / 4).clamp(1.0, yRange).toDouble();
-    final xInterval = (span / 4).clamp(1.0, span).toDouble();
-
-    return LineChart(
-      LineChartData(
-        minX: xMin,
-        maxX: xMax,
-        minY: yMin,
-        maxY: yMax,
-        clipData: const FlClipData.all(),
-        gridData: FlGridData(
-          show: true,
-          drawHorizontalLine: true,
-          drawVerticalLine: false,
-          horizontalInterval: yInterval,
-          getDrawingHorizontalLine: (_) => FlLine(
-            color: scheme.outlineVariant.withValues(alpha: 0.4),
-            strokeWidth: 0.5,
-          ),
-        ),
-        titlesData: FlTitlesData(
-          topTitles:
-              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles:
-              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          leftTitles: AxisTitles(
-            sideTitles: SideTitles(
-              showTitles: true,
-              reservedSize: 30,
-              interval: yInterval,
-              getTitlesWidget: (v, _) => Padding(
-                padding: const EdgeInsets.only(right: 4),
-                child: Text(
-                  v.toStringAsFixed(0),
-                  style: theme.textTheme.labelSmall,
-                ),
-              ),
-            ),
-          ),
-          bottomTitles: AxisTitles(
-            sideTitles: SideTitles(
-              showTitles: true,
-              reservedSize: 18,
-              interval: xInterval,
-              getTitlesWidget: (v, _) {
-                final s = v.toInt();
-                final mm = (s ~/ 60).toString();
-                final ss = (s % 60).toString().padLeft(2, '0');
-                return Text('$mm:$ss', style: theme.textTheme.labelSmall);
-              },
-            ),
-          ),
-        ),
-        borderData: FlBorderData(
-          show: true,
-          border: Border(
-            left:
-                BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.5)),
-            bottom:
-                BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.5)),
-          ),
-        ),
-        lineBarsData: [
-          LineChartBarData(
-            spots: breathSpots,
-            isCurved: false,
-            barWidth: 1.2,
-            color: scheme.secondary.withValues(alpha: 0.55),
-            dotData: const FlDotData(show: false),
-            dashArray: const [4, 4],
-          ),
-          LineChartBarData(
-            spots: spots,
-            isCurved: true,
-            curveSmoothness: 0.2,
-            barWidth: 2.2,
-            color: scheme.primary,
-            dotData: const FlDotData(show: false),
-          ),
-        ],
-      ),
+    return LiveHrChart(
+      trace: st.hrTrace,
+      startReference: st.startedAt,
+      pacer: st.pattern,
     );
   }
 }
 
-class _ChartHeader extends StatelessWidget {
-  final int? currentBpm;
-  final int? swing;
-  final String? range;
-  const _ChartHeader({this.currentBpm, this.swing, this.range});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        Icon(Icons.favorite, color: scheme.primary, size: 16),
-        const SizedBox(width: 4),
-        Text(
-          currentBpm == null ? '--' : '$currentBpm',
-          style: theme.textTheme.headlineSmall?.copyWith(
-            fontWeight: FontWeight.w600,
-            height: 1,
-          ),
-        ),
-        const SizedBox(width: 3),
-        Padding(
-          padding: const EdgeInsets.only(bottom: 3),
-          child: Text('bpm', style: theme.textTheme.labelSmall),
-        ),
-        const Spacer(),
-        if (swing != null) ...[
-          Tooltip(
-            message:
-                'Oscillazione HR negli ultimi 30s (RSA).\n'
-                'Più è ampia, migliore è la coerenza col respiro.',
-            child: _Pill(label: 'RSA Δ', value: '$swing bpm'),
-          ),
-          const SizedBox(width: 6),
-        ],
-        if (range != null) _Pill(label: 'range', value: range!),
-      ],
-    );
-  }
-}
-
-class _ChartLegend extends StatelessWidget {
-  final ColorScheme scheme;
-  final TextTheme textTheme;
-  const _ChartLegend({required this.scheme, required this.textTheme});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Container(
-          width: 10,
-          height: 2.5,
-          color: scheme.primary,
-        ),
-        const SizedBox(width: 4),
-        Text('HR live', style: textTheme.labelSmall),
-        const SizedBox(width: 14),
-        SizedBox(
-          width: 14,
-          height: 2,
-          child: CustomPaint(
-            painter: _DashPainter(scheme.secondary.withValues(alpha: 0.7)),
-          ),
-        ),
-        const SizedBox(width: 4),
-        Text('respiro guida', style: textTheme.labelSmall),
-      ],
-    );
-  }
-}
-
-class _DashPainter extends CustomPainter {
-  final Color color;
-  _DashPainter(this.color);
-  @override
-  void paint(Canvas canvas, Size size) {
-    final p = Paint()
-      ..color = color
-      ..strokeWidth = 1.6
-      ..strokeCap = StrokeCap.butt;
-    const dash = 3.0;
-    const gap = 2.0;
-    double x = 0;
-    final y = size.height / 2;
-    while (x < size.width) {
-      canvas.drawLine(
-        Offset(x, y),
-        Offset((x + dash).clamp(0.0, size.width), y),
-        p,
-      );
-      x += dash + gap;
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _DashPainter old) => old.color != color;
-}
-
-class _Pill extends StatelessWidget {
-  final String label;
-  final String value;
-  const _Pill({required this.label, required this.value});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(label, style: theme.textTheme.labelSmall),
-          const SizedBox(width: 4),
-          Text(
-            value,
-            style: theme.textTheme.labelMedium?.copyWith(
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _LiveMetrics extends ConsumerWidget {
-  const _LiveMetrics();
+/// Statistiche live (RMSSD preview · RSA Δ · campioni), identiche al morning.
+class _TrainingStats extends ConsumerWidget {
+  const _TrainingStats();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // Watch SOLO le metriche aggregate: cambiano ogni 5s, non ad ogni
-    // pacer tick né ad ogni HR sample.
-    final m = ref.watch(
-      trainingControllerProvider.select((s) => s.liveMetrics),
-    );
-    final t = Theme.of(context).textTheme;
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-      children: [
-        _stat(t, 'HR',
-            m.meanHrBpm == 0 ? '--' : m.meanHrBpm.toStringAsFixed(0)),
-        _stat(t, 'SDNN', m.sdnnMs == 0 ? '--' : m.sdnnMs.toStringAsFixed(0)),
-        _stat(t, 'RMSSD',
-            m.rmssdMs == 0 ? '--' : m.rmssdMs.toStringAsFixed(0)),
-        _stat(t, 'LF peak',
-            m.lfPeakHz == 0 ? '--' : m.lfPeakHz.toStringAsFixed(2)),
-      ],
+    final st = ref.watch(trainingControllerProvider);
+    return LiveSessionStats(
+      trace: st.hrTrace,
+      liveMetrics: st.liveMetrics,
+      sampleCount: st.samples.length,
     );
   }
-
-  Widget _stat(TextTheme t, String l, String v) => Column(
-        children: [
-          Text(v, style: t.titleLarge),
-          Text(l, style: t.labelSmall),
-        ],
-      );
 }
 
-/// Orb del respiro: ascolta il pacer (20 Hz) ma NON il TrainingState, così
-/// che il rebuild del cerchio non trascini chart/metrics/progress.
+/// Orb del respiro: ascolta il pacer (20 Hz) ma NON il TrainingState, così che
+/// il rebuild del cerchio non trascini chart/countdown/statistiche. Più piccolo
+/// che in passato (160) per lasciare spazio al readout in stile morning sotto.
 class _OrbView extends ConsumerWidget {
-  const _OrbView();
+  final double size;
+  const _OrbView({this.size = 160});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -625,93 +618,7 @@ class _OrbView extends ConsumerWidget {
       phaseProgress: tick.progress,
       inhaleColor: theme.colorScheme.primary,
       exhaleColor: theme.colorScheme.secondary,
-      size: 260,
+      size: size,
     );
-  }
-}
-
-/// Titolo AppBar con countdown: aggiorna ogni secondo via Timer interno
-/// invece di rebuild dal TrainingController (che cambia ad ogni HR sample).
-class _TrainingTimerTitle extends ConsumerStatefulWidget {
-  const _TrainingTimerTitle();
-
-  @override
-  ConsumerState<_TrainingTimerTitle> createState() =>
-      _TrainingTimerTitleState();
-}
-
-class _TrainingTimerTitleState extends ConsumerState<_TrainingTimerTitle> {
-  Timer? _ticker;
-
-  @override
-  void initState() {
-    super.initState();
-    _ticker = Timer.periodic(
-      const Duration(seconds: 1),
-      (_) => setState(() {}),
-    );
-  }
-
-  @override
-  void dispose() {
-    _ticker?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final st = ref.read(trainingControllerProvider);
-    // startedAt == null finché non arriva il primo HR sample dal watch:
-    // il countdown del phone si allinea a quello del watch così che
-    // entrambi terminino nello stesso istante (vedi TrainingController).
-    if (st.startedAt == null) {
-      return const Text('Training • avvio sul watch…');
-    }
-    final remaining = Duration(seconds: st.targetDurationSec) - st.elapsed;
-    final remSec = remaining.isNegative ? 0 : remaining.inSeconds;
-    final m = (remSec ~/ 60).toString().padLeft(2, '0');
-    final s = (remSec % 60).toString().padLeft(2, '0');
-    return Text('Training • $m:$s');
-  }
-}
-
-/// LinearProgress che si aggiorna ogni secondo (basta per occhio umano)
-/// senza dipendere da rebuild del trainingController.
-class _TrainingProgressBar extends ConsumerStatefulWidget {
-  const _TrainingProgressBar();
-
-  @override
-  ConsumerState<_TrainingProgressBar> createState() =>
-      _TrainingProgressBarState();
-}
-
-class _TrainingProgressBarState extends ConsumerState<_TrainingProgressBar> {
-  Timer? _ticker;
-
-  @override
-  void initState() {
-    super.initState();
-    _ticker = Timer.periodic(
-      const Duration(seconds: 1),
-      (_) => setState(() {}),
-    );
-  }
-
-  @override
-  void dispose() {
-    _ticker?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final st = ref.read(trainingControllerProvider);
-    // Indeterminate finché startedAt non è fissato dal primo HR sample:
-    // segnala visivamente che stiamo aspettando l'allineamento col watch.
-    if (st.startedAt == null) {
-      return const LinearProgressIndicator();
-    }
-    final value = (st.elapsed.inSeconds / st.targetDurationSec).clamp(0.0, 1.0);
-    return LinearProgressIndicator(value: value);
   }
 }

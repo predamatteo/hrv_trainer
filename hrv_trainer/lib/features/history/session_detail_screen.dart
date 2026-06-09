@@ -1307,7 +1307,8 @@ class _TachoLegend extends StatelessWidget {
   }
 }
 
-/// Tratteggio orizzontale per le legende. Mirror di training_screen._DashPainter.
+/// Tratteggio orizzontale per le legende. Gemello del _DashPainter in
+/// shared/hrv/widgets/live_session_view.dart.
 class _DashPainter extends CustomPainter {
   final Color color;
   _DashPainter(this.color);

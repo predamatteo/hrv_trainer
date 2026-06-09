@@ -1,4 +1,3 @@
-import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -6,7 +5,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../shared/hrv/hrv_metrics.dart';
 import '../../shared/hrv/morning_reading.dart';
-import '../../shared/hrv/rr_interval.dart';
+import '../../shared/hrv/widgets/live_session_view.dart';
 import 'state/morning_checkin_controller.dart';
 
 /// Flusso di misura mattutina a respiro SPONTANEO (NON guidato): a differenza
@@ -163,8 +162,6 @@ class _MorningCheckInScreenState extends ConsumerState<MorningCheckInScreen> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final settling = state.settling;
-    final mm = (state.secLeft ~/ 60).toString().padLeft(2, '0');
-    final ss = (state.secLeft % 60).toString().padLeft(2, '0');
 
     return PopScope(
       canPop: false,
@@ -214,39 +211,13 @@ class _MorningCheckInScreenState extends ConsumerState<MorningCheckInScreen> {
                 ),
                 const SizedBox(height: 20),
                 // Countdown grande: resta l'elemento dominante della schermata.
-                Text(
-                  '$mm:$ss',
-                  textAlign: TextAlign.center,
-                  style: theme.textTheme.displayLarge?.copyWith(
-                    fontWeight: FontWeight.w300,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                    color: settling ? scheme.outline : scheme.primary,
-                  ),
-                ),
+                BigCountdown(secLeft: state.secLeft, muted: settling),
                 const SizedBox(height: 16),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.favorite, color: scheme.primary, size: 20),
-                    const SizedBox(width: 6),
-                    Text(
-                      state.currentBpm == null ? '--' : '${state.currentBpm}',
-                      style: theme.textTheme.headlineSmall?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        fontFeatures: const [FontFeature.tabularFigures()],
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    Padding(
-                      padding: const EdgeInsets.only(top: 6),
-                      child: Text('bpm', style: theme.textTheme.labelMedium),
-                    ),
-                  ],
-                ),
+                LiveBpmRow(bpm: state.currentBpm),
                 const SizedBox(height: 16),
                 // Grafico HR live: l'oscillazione dei battiti È il respiro (RSA).
                 // Nessun pacer/overlay — la misura è a respiro spontaneo.
-                const Expanded(child: _MorningHrChart()),
+                Expanded(child: LiveHrChart(trace: state.hrTrace)),
                 const SizedBox(height: 8),
                 Text(
                   'La linea segue il cuore: sale quando inspiri, scende quando '
@@ -258,7 +229,11 @@ class _MorningCheckInScreenState extends ConsumerState<MorningCheckInScreen> {
                   ),
                 ),
                 const SizedBox(height: 16),
-                const _MorningLiveStats(),
+                LiveSessionStats(
+                  trace: state.hrTrace,
+                  liveMetrics: state.liveMetrics,
+                  sampleCount: state.sampleCount,
+                ),
               ],
             ),
           ),
@@ -616,218 +591,5 @@ class _ConfidencePill extends StatelessWidget {
         ],
       ),
     );
-  }
-}
-
-/// Grafico HR live durante la misura. Una SOLA linea (i battiti): la sua
-/// oscillazione è la visualizzazione del respiro spontaneo (RSA). A differenza
-/// del training NON c'è overlay tratteggiato del pacer, perché qui il respiro
-/// non è guidato. Stile coerente col chart della sessione standard.
-class _MorningHrChart extends ConsumerWidget {
-  const _MorningHrChart();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final trace = ref.watch(
-      morningCheckInControllerProvider.select((s) => s.hrTrace),
-    );
-
-    // Sotto 2 punti minX==maxX e fl_chart asserta: placeholder "in attesa".
-    if (trace.length < 2) {
-      return Center(
-        child: Text(
-          'In attesa del watch…',
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: scheme.onSurfaceVariant,
-          ),
-        ),
-      );
-    }
-
-    final start = trace.first.timestamp;
-    final spots = [
-      for (final p in trace)
-        FlSpot(
-          p.timestamp.difference(start).inMilliseconds / 1000.0,
-          p.bpm.toDouble(),
-        ),
-    ];
-    final bpms = trace.map((p) => p.bpm).toList();
-    final dataMin = bpms.reduce((a, b) => a < b ? a : b);
-    final dataMax = bpms.reduce((a, b) => a > b ? a : b);
-    final pad = ((dataMax - dataMin) * 0.2).clamp(3, 10).toDouble();
-    final yMin = (dataMin - pad).floorToDouble();
-    final yMax = (dataMax + pad).ceilToDouble();
-
-    final xMin = spots.first.x;
-    final xMax = spots.last.x;
-    final span = (xMax - xMin) <= 0 ? 1.0 : (xMax - xMin);
-
-    final yRange = yMax - yMin;
-    // interval in [1, range] per evitare assertion fl_chart (interval > range).
-    final yInterval = (yRange / 4).clamp(1.0, yRange).toDouble();
-    final xInterval = (span / 4).clamp(1.0, span).toDouble();
-
-    return LineChart(
-      LineChartData(
-        minX: xMin,
-        maxX: xMax,
-        minY: yMin,
-        maxY: yMax,
-        clipData: const FlClipData.all(),
-        gridData: FlGridData(
-          show: true,
-          drawHorizontalLine: true,
-          drawVerticalLine: false,
-          horizontalInterval: yInterval,
-          getDrawingHorizontalLine: (_) => FlLine(
-            color: scheme.outlineVariant.withValues(alpha: 0.4),
-            strokeWidth: 0.5,
-          ),
-        ),
-        titlesData: FlTitlesData(
-          topTitles:
-              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles:
-              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          leftTitles: AxisTitles(
-            sideTitles: SideTitles(
-              showTitles: true,
-              reservedSize: 30,
-              interval: yInterval,
-              getTitlesWidget: (v, _) => Padding(
-                padding: const EdgeInsets.only(right: 4),
-                child: Text(
-                  v.toStringAsFixed(0),
-                  style: theme.textTheme.labelSmall,
-                ),
-              ),
-            ),
-          ),
-          bottomTitles: AxisTitles(
-            sideTitles: SideTitles(
-              showTitles: true,
-              reservedSize: 18,
-              interval: xInterval,
-              getTitlesWidget: (v, _) {
-                final s = v.toInt();
-                final mm = (s ~/ 60).toString();
-                final ss = (s % 60).toString().padLeft(2, '0');
-                return Text('$mm:$ss', style: theme.textTheme.labelSmall);
-              },
-            ),
-          ),
-        ),
-        borderData: FlBorderData(
-          show: true,
-          border: Border(
-            left:
-                BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.5)),
-            bottom:
-                BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.5)),
-          ),
-        ),
-        lineBarsData: [
-          LineChartBarData(
-            spots: spots,
-            isCurved: true,
-            curveSmoothness: 0.2,
-            barWidth: 2.2,
-            color: scheme.primary,
-            dotData: const FlDotData(show: false),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Riga di metriche live durante la cattura: RMSSD (preview), ampiezza RSA e
-/// campioni. È un'anteprima — il valore definitivo è nel riepilogo finale —
-/// quindi styling più leggero del [_MeasureSummaryCard].
-class _MorningLiveStats extends ConsumerWidget {
-  const _MorningLiveStats();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final state = ref.watch(morningCheckInControllerProvider);
-    final live = state.liveMetrics;
-
-    // RMSSD live: '--' finché non c'è una preview valida (≥20 campioni).
-    final rmssd = (live == null || live.rmssdMs == 0)
-        ? '--'
-        : live.rmssdMs.toStringAsFixed(1);
-
-    final swing = _rsaSwing(state.hrTrace);
-    final rsa = swing == null ? '--' : '$swing';
-
-    return Column(
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
-            _stat(theme, 'RMSSD (live)', rmssd, 'ms'),
-            _stat(theme, 'RSA Δ', rsa, 'bpm',
-                tooltip: 'Ampiezza dell\'oscillazione HR negli ultimi 30s '
-                    '(RSA): più è ampia, più il respiro modula il cuore.'),
-            _stat(theme, 'Campioni', '${state.sampleCount}', 'RR'),
-          ],
-        ),
-        const SizedBox(height: 6),
-        Text(
-          'Anteprima: si stabilizza a fine misura.',
-          style: theme.textTheme.labelSmall?.copyWith(
-            color: scheme.onSurfaceVariant,
-          ),
-        ),
-      ],
-    );
-  }
-
-  /// Ampiezza RSA: max-min dei BPM negli ultimi 30s di trace. null se non ci
-  /// sono almeno 2 punti nella finestra.
-  int? _rsaSwing(List<HrTracePoint> trace) {
-    if (trace.length < 2) return null;
-    final from = trace.last.timestamp.subtract(const Duration(seconds: 30));
-    final recent = trace.where((p) => p.timestamp.isAfter(from)).toList();
-    if (recent.length < 2) return null;
-    final bpms = recent.map((p) => p.bpm);
-    final mn = bpms.reduce((a, b) => a < b ? a : b);
-    final mx = bpms.reduce((a, b) => a > b ? a : b);
-    return mx - mn;
-  }
-
-  Widget _stat(ThemeData theme, String label, String value, String unit,
-      {String? tooltip}) {
-    final col = Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              value,
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w600,
-                fontFeatures: const [FontFeature.tabularFigures()],
-              ),
-            ),
-            const SizedBox(width: 3),
-            Padding(
-              padding: const EdgeInsets.only(bottom: 2),
-              child: Text(unit, style: theme.textTheme.labelSmall),
-            ),
-          ],
-        ),
-        Text(label, style: theme.textTheme.labelSmall),
-      ],
-    );
-    if (tooltip == null) return col;
-    return Tooltip(message: tooltip, child: col);
   }
 }
