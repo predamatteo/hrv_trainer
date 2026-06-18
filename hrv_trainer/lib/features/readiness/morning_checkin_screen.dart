@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
+import '../../shared/connect_iq/widgets/watch_readiness_gate.dart';
 import '../../shared/hrv/hrv_metrics.dart';
 import '../../shared/hrv/morning_reading.dart';
 import '../../shared/hrv/widgets/live_session_view.dart';
@@ -48,6 +49,26 @@ class _MorningCheckInScreenState extends ConsumerState<MorningCheckInScreen> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(morningCheckInControllerProvider);
+
+    // Misura annullata perché l'orologio non ha mai inviato dati: segnaliamo
+    // l'errore (lo stato è già tornato a idle nel controller) così l'utente può
+    // sistemare la connessione e riprovare.
+    ref.listen<MorningCheckInState>(morningCheckInControllerProvider, (
+      prev,
+      next,
+    ) {
+      if (next.abortedNoData && (prev == null || !prev.abortedNoData)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Nessun dato dall\'orologio: misura annullata. '
+              'Controlla la connessione e riprova.',
+            ),
+            duration: Duration(seconds: 4),
+          ),
+        );
+      }
+    });
 
     // Tieni lo schermo acceso solo mentre si misura: l'utente sta fermo e non
     // tocca il telefono, senza wakelock Android farebbe black-out interrompendo
@@ -118,18 +139,18 @@ class _MorningCheckInScreenState extends ConsumerState<MorningCheckInScreen> {
             runSpacing: 4,
             // Solo i protocolli spontanei: `paced` è legacy (vecchie letture a
             // respiro guidato) e non va proposto per nuove misure baseline.
-            children: const [
-              MorningProtocol.seated60,
-              MorningProtocol.seated180,
-            ].map((p) {
-              return ChoiceChip(
-                label: Text(p.label),
-                selected: state.protocol == p,
-                onSelected: (_) => ref
-                    .read(morningCheckInControllerProvider.notifier)
-                    .setProtocol(p),
-              );
-            }).toList(),
+            children:
+                const [MorningProtocol.seated60, MorningProtocol.seated180].map(
+                  (p) {
+                    return ChoiceChip(
+                      label: Text(p.label),
+                      selected: state.protocol == p,
+                      onSelected: (_) => ref
+                          .read(morningCheckInControllerProvider.notifier)
+                          .setProtocol(p),
+                    );
+                  },
+                ).toList(),
           ),
           const SizedBox(height: 8),
           Text(
@@ -146,9 +167,14 @@ class _MorningCheckInScreenState extends ConsumerState<MorningCheckInScreen> {
               padding: const EdgeInsets.symmetric(vertical: 16),
             ),
             label: const Text('Avvia misura'),
-            onPressed: () => ref
-                .read(morningCheckInControllerProvider.notifier)
-                .start(),
+            onPressed: () async {
+              // Gate di connettività: niente misura se l'orologio non è
+              // connesso (no più cattura a vuoto). Il gate offre le azioni
+              // per risolvere (Attiva BT / Riconnetti / Cerca orologio).
+              final ready = await ensureWatchReady(context, ref);
+              if (!ready || !context.mounted) return;
+              await ref.read(morningCheckInControllerProvider.notifier).start();
+            },
           ),
         ],
       ),
@@ -177,7 +203,13 @@ class _MorningCheckInScreenState extends ConsumerState<MorningCheckInScreen> {
         appBar: AppBar(
           // Niente titolo "ricco": la vista deve restare calma. Solo l'azione
           // per annullare la misura.
-          title: Text(settling ? 'Assestamento' : 'Misurazione'),
+          title: Text(
+            state.waitingForWatch
+                ? 'Avvio…'
+                : settling
+                ? 'Assestamento'
+                : 'Misurazione',
+          ),
           actions: [
             TextButton(
               onPressed: () async {
@@ -194,49 +226,65 @@ class _MorningCheckInScreenState extends ConsumerState<MorningCheckInScreen> {
           ],
         ),
         body: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(24, 12, 24, 16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const SizedBox(height: 8),
-                Text(
-                  settling
-                      ? 'Assestamento… stai fermo'
-                      : 'Respira normalmente, stai fermo',
-                  textAlign: TextAlign.center,
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    color: scheme.onSurfaceVariant,
+          // Finché il watch non manda il primo battito mostriamo una vista di
+          // attesa: il countdown non parte (niente cattura a vuoto). Se entro
+          // il timeout non arriva nulla, il controller annulla con errore.
+          child: state.waitingForWatch
+              ? WatchWaitingView(
+                  onCancel: () async {
+                    await ref
+                        .read(morningCheckInControllerProvider.notifier)
+                        .cancel();
+                    if (context.mounted && context.canPop()) context.pop();
+                  },
+                )
+              : Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 12, 24, 16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (state.connectionLost) ...[
+                        const WatchConnectionLostBanner(),
+                        const SizedBox(height: 8),
+                      ],
+                      const SizedBox(height: 8),
+                      Text(
+                        settling
+                            ? 'Assestamento… stai fermo'
+                            : 'Respira normalmente, stai fermo',
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      // Countdown grande: resta l'elemento dominante della schermata.
+                      BigCountdown(secLeft: state.secLeft, muted: settling),
+                      const SizedBox(height: 16),
+                      LiveBpmRow(bpm: state.currentBpm),
+                      const SizedBox(height: 16),
+                      // Grafico HR live: l'oscillazione dei battiti È il respiro (RSA).
+                      // Nessun pacer/overlay — la misura è a respiro spontaneo.
+                      Expanded(child: LiveHrChart(trace: state.hrTrace)),
+                      const SizedBox(height: 8),
+                      Text(
+                        'La linea segue il cuore: sale quando inspiri, scende quando '
+                        'espiri (RSA). Respira come viene, non seguirla.',
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                          height: 1.35,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      LiveSessionStats(
+                        trace: state.hrTrace,
+                        liveMetrics: state.liveMetrics,
+                        sampleCount: state.sampleCount,
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 20),
-                // Countdown grande: resta l'elemento dominante della schermata.
-                BigCountdown(secLeft: state.secLeft, muted: settling),
-                const SizedBox(height: 16),
-                LiveBpmRow(bpm: state.currentBpm),
-                const SizedBox(height: 16),
-                // Grafico HR live: l'oscillazione dei battiti È il respiro (RSA).
-                // Nessun pacer/overlay — la misura è a respiro spontaneo.
-                Expanded(child: LiveHrChart(trace: state.hrTrace)),
-                const SizedBox(height: 8),
-                Text(
-                  'La linea segue il cuore: sale quando inspiri, scende quando '
-                  'espiri (RSA). Respira come viene, non seguirla.',
-                  textAlign: TextAlign.center,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                    height: 1.35,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                LiveSessionStats(
-                  trace: state.hrTrace,
-                  liveMetrics: state.liveMetrics,
-                  sampleCount: state.sampleCount,
-                ),
-              ],
-            ),
-          ),
         ),
       ),
     );
@@ -273,8 +321,7 @@ class _MorningCheckInScreenState extends ConsumerState<MorningCheckInScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  Text('Qualità del sonno',
-                      style: theme.textTheme.labelLarge),
+                  Text('Qualità del sonno', style: theme.textTheme.labelLarge),
                   const SizedBox(height: 6),
                   Wrap(
                     spacing: 8,
@@ -284,13 +331,15 @@ class _MorningCheckInScreenState extends ConsumerState<MorningCheckInScreen> {
                         // proponiamo come chip selezionabile.
                         .where((s) => s != SleepQuality.unknown)
                         .map((s) {
-                      return ChoiceChip(
-                        label: Text(s.label),
-                        selected: _sleep == s,
-                        onSelected: (sel) => setState(
-                            () => _sleep = sel ? s : SleepQuality.unknown),
-                      );
-                    }).toList(),
+                          return ChoiceChip(
+                            label: Text(s.label),
+                            selected: _sleep == s,
+                            onSelected: (sel) => setState(
+                              () => _sleep = sel ? s : SleepQuality.unknown,
+                            ),
+                          );
+                        })
+                        .toList(),
                   ),
                   const SizedBox(height: 16),
                   Text('Fattori', style: theme.textTheme.labelLarge),
@@ -299,21 +348,32 @@ class _MorningCheckInScreenState extends ConsumerState<MorningCheckInScreen> {
                     spacing: 8,
                     runSpacing: 4,
                     children: [
-                      _toggleChip('Alcol', _alcohol,
-                          (v) => setState(() => _alcohol = v)),
-                      _toggleChip('Malato', _illness,
-                          (v) => setState(() => _illness = v)),
-                      _toggleChip('Stressato', _stressed,
-                          (v) => setState(() => _stressed = v)),
-                      _toggleChip('Indolenzito', _soreness,
-                          (v) => setState(() => _soreness = v)),
+                      _toggleChip(
+                        'Alcol',
+                        _alcohol,
+                        (v) => setState(() => _alcohol = v),
+                      ),
+                      _toggleChip(
+                        'Malato',
+                        _illness,
+                        (v) => setState(() => _illness = v),
+                      ),
+                      _toggleChip(
+                        'Stressato',
+                        _stressed,
+                        (v) => setState(() => _stressed = v),
+                      ),
+                      _toggleChip(
+                        'Indolenzito',
+                        _soreness,
+                        (v) => setState(() => _soreness = v),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 16),
                   Row(
                     children: [
-                      Text('Affaticamento',
-                          style: theme.textTheme.labelLarge),
+                      Text('Affaticamento', style: theme.textTheme.labelLarge),
                       const Spacer(),
                       Text(
                         _fatigue == null ? '—' : '$_fatigue / 5',
@@ -398,7 +458,9 @@ class _MorningCheckInScreenState extends ConsumerState<MorningCheckInScreen> {
                 icon: const Icon(Icons.insights),
                 style: FilledButton.styleFrom(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 24, vertical: 14),
+                    horizontal: 24,
+                    vertical: 14,
+                  ),
                 ),
                 label: const Text('Vedi readiness'),
                 onPressed: () => context.pushReplacement('/readiness'),
@@ -438,8 +500,9 @@ class _MorningCheckInScreenState extends ConsumerState<MorningCheckInScreen> {
       soreness: _soreness,
       fatigue: _fatigue,
     );
-    final id =
-        await ref.read(morningCheckInControllerProvider.notifier).save(ctx);
+    final id = await ref
+        .read(morningCheckInControllerProvider.notifier)
+        .save(ctx);
     if (!context.mounted) return;
     if (id == null) {
       // Nessuna metrica valida (es. campioni insufficienti): non navighiamo,
@@ -459,27 +522,26 @@ class _MorningCheckInScreenState extends ConsumerState<MorningCheckInScreen> {
   }
 
   Future<bool?> _confirmCancel() => showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Annullare la misura?'),
-          content: const Text(
-              'I dati raccolti finora verranno scartati.'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('Continua'),
-            ),
-            FilledButton.tonal(
-              style: FilledButton.styleFrom(
-                foregroundColor: Theme.of(ctx).colorScheme.onErrorContainer,
-                backgroundColor: Theme.of(ctx).colorScheme.errorContainer,
-              ),
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('Annulla misura'),
-            ),
-          ],
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Annullare la misura?'),
+      content: const Text('I dati raccolti finora verranno scartati.'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(false),
+          child: const Text('Continua'),
         ),
-      );
+        FilledButton.tonal(
+          style: FilledButton.styleFrom(
+            foregroundColor: Theme.of(ctx).colorScheme.onErrorContainer,
+            backgroundColor: Theme.of(ctx).colorScheme.errorContainer,
+          ),
+          onPressed: () => Navigator.of(ctx).pop(true),
+          child: const Text('Annulla misura'),
+        ),
+      ],
+    ),
+  );
 }
 
 /// Riepilogo compatto della misura: RMSSD/HR/campioni + pill confidenza.
@@ -508,16 +570,22 @@ class _MeasureSummaryCard extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
-                _stat(theme, 'RMSSD',
-                    metrics.rmssdMs == 0
-                        ? '--'
-                        : metrics.rmssdMs.toStringAsFixed(1),
-                    'ms'),
-                _stat(theme, 'HR',
-                    metrics.meanHrBpm == 0
-                        ? '--'
-                        : metrics.meanHrBpm.toStringAsFixed(0),
-                    'bpm'),
+                _stat(
+                  theme,
+                  'RMSSD',
+                  metrics.rmssdMs == 0
+                      ? '--'
+                      : metrics.rmssdMs.toStringAsFixed(1),
+                  'ms',
+                ),
+                _stat(
+                  theme,
+                  'HR',
+                  metrics.meanHrBpm == 0
+                      ? '--'
+                      : metrics.meanHrBpm.toStringAsFixed(0),
+                  'bpm',
+                ),
                 _stat(theme, 'Campioni', '${metrics.samples}', 'RR'),
               ],
             ),

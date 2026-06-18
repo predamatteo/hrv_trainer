@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-import '../../shared/connect_iq/heart_rate_source.dart';
+import '../../shared/connect_iq/bluetooth_state.dart';
 import '../../shared/connect_iq/hr_source_provider.dart';
+import '../../shared/connect_iq/watch_readiness.dart';
 import '../../shared/notifications/reminder_settings.dart';
 
 class SettingsScreen extends ConsumerWidget {
@@ -13,8 +14,6 @@ class SettingsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final settings = ref.watch(reminderControllerProvider);
     final controller = ref.read(reminderControllerProvider.notifier);
-    final hrSrc = ref.watch(heartRateSourceProvider);
-    final stateAsync = ref.watch(hrSourceStateProvider);
     final theme = Theme.of(context);
 
     return Scaffold(
@@ -23,9 +22,9 @@ class SettingsScreen extends ConsumerWidget {
         padding: const EdgeInsets.symmetric(vertical: 8),
         children: [
           _SectionLabel('Orologio', style: theme.textTheme.titleSmall),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: _DeviceCard(source: hrSrc, state: stateAsync.value),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: _DeviceCard(),
           ),
           const Divider(height: 1),
           SwitchListTile(
@@ -106,9 +105,10 @@ class SettingsScreen extends ConsumerWidget {
                   ActionChip(
                     avatar: const Icon(Icons.repeat, size: 18),
                     label: const Text('Mattina + sera'),
-                    onPressed: () => controller.applyPreset(
-                      const [ReminderPresets.morning, ReminderPresets.evening],
-                    ),
+                    onPressed: () => controller.applyPreset(const [
+                      ReminderPresets.morning,
+                      ReminderPresets.evening,
+                    ]),
                   ),
                 ],
               ),
@@ -192,64 +192,58 @@ class SettingsScreen extends ConsumerWidget {
       TimeOfDay(hour: t.hour, minute: t.minute).format(context);
 }
 
-class _DeviceCard extends StatelessWidget {
-  final HeartRateSource source;
-  final HrSourceState? state;
-
-  const _DeviceCard({required this.source, required this.state});
+class _DeviceCard extends ConsumerWidget {
+  const _DeviceCard();
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
-    final st = state ?? HrSourceState.disconnected;
-    final connected = st == HrSourceState.connected;
-    final connecting = st == HrSourceState.connecting;
-    final color = switch (st) {
-      HrSourceState.connected => theme.colorScheme.primary,
-      HrSourceState.error => theme.colorScheme.error,
+    final source = ref.watch(heartRateSourceProvider);
+    // Prontezza combinata BT-telefono + link Garmin: distingue "Bluetooth
+    // spento" da "orologio non raggiungibile" e offre l'azione giusta.
+    final readiness = ref.watch(watchReadinessProvider);
+
+    final color = switch (readiness) {
+      WatchReadiness.ready => theme.colorScheme.primary,
+      WatchReadiness.error ||
+      WatchReadiness.bluetoothOff => theme.colorScheme.error,
       _ => theme.colorScheme.outline,
     };
-    final label = switch (st) {
-      HrSourceState.connected => 'Connesso',
-      HrSourceState.connecting => 'Connessione…',
-      HrSourceState.error => 'Errore di connessione',
-      HrSourceState.noDevice => 'Nessun orologio trovato',
-      HrSourceState.disconnected => 'Disconnesso',
-    };
-    // Il bottone gestisce SOLO il link BT (connessione/riconnessione), NON
-    // l'avvio di una sessione. Prima "Connetti" chiamava source.start(), che
-    // faceva partire una sessione fantasma sul watch (nessuna durata → niente
-    // auto-stop = orologio che "continua ad andare"). Le sessioni si avviano
-    // ora esclusivamente dalle loro schermate (Training/Assessment/Check-in).
-    final btnLabel = switch (st) {
-      HrSourceState.noDevice => 'Cerca orologio',
-      HrSourceState.connected => 'Riconnetti',
-      _ => 'Connetti',
-    };
+
+    // Il bottone gestisce SOLO il link (Bluetooth/riconnessione), NON l'avvio
+    // di una sessione. Le sessioni si avviano esclusivamente dalle loro
+    // schermate (Training/Assessment/Check-in), ciascuna col proprio gate.
     final Widget trailing;
-    if (connecting) {
+    if (readiness == WatchReadiness.connecting) {
       trailing = const SizedBox(
         width: 20,
         height: 20,
         child: CircularProgressIndicator(strokeWidth: 2),
       );
-    } else if (connected) {
+    } else if (readiness == WatchReadiness.bluetoothOff) {
+      trailing = FilledButton.tonal(
+        onPressed: requestEnableBluetooth,
+        child: const Text('Attiva BT'),
+      );
+    } else if (readiness.isReady) {
       // Connesso: riconnessione disponibile ma defilata (caso recovery).
       trailing = TextButton(
         onPressed: () => source.reconnect(),
-        child: Text(btnLabel),
+        child: const Text('Riconnetti'),
       );
     } else {
       trailing = FilledButton.tonal(
         onPressed: () => source.reconnect(),
-        child: Text(btnLabel),
+        child: Text(
+          readiness == WatchReadiness.noDevice ? 'Cerca orologio' : 'Connetti',
+        ),
       );
     }
     return Card(
       child: ListTile(
         leading: Icon(Icons.watch_outlined, color: color, size: 32),
         title: Text(source.displayName),
-        subtitle: Text(label),
+        subtitle: Text(readiness.title),
         trailing: trailing,
       ),
     );
@@ -263,7 +257,7 @@ class _SectionLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-        child: Text(text, style: style),
-      );
+    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+    child: Text(text, style: style),
+  );
 }
