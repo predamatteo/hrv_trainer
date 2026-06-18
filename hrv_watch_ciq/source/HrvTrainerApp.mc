@@ -89,7 +89,9 @@ class HrvTrainerApp extends App.AppBase {
         }
         if (mView != null) {
             try {
-                mView.startSession(pacer, durSec);
+                // Standalone (avvio dal watch): nessuna prep — l'utente è già
+                // al polso e pronto, parte subito a regime.
+                mView.startSession(pacer, durSec, 0);
                 Sys.println("requestStartLocal: view started");
             } catch (ex) {
                 Sys.println("requestStartLocal: view FAIL " + ex.getErrorMessage());
@@ -242,7 +244,11 @@ class HrvTrainerApp extends App.AppBase {
                     catch (ex) { Sys.println("reset: discard FAIL " + ex.getErrorMessage()); }
                 }
             }
-            mSession.start(hz, recFit);
+            // prepMs: fase di preparazione silenziosa (vedi HrvTrainerView /
+            // HrSession). Assente sui phone più vecchi → 0 = nessuna prep.
+            var prep = d["prepMs"];
+            if (prep == null) { prep = 0; }
+            mSession.start(hz, recFit, prep);
             // phoneTxMs: epoch ms del phone catturato lato bridge Kotlin
             // immediatamente prima di sendMessage. Ritrasmesso in ogni
             // HR_SAMPLE per permettere al phone di stimare la latenza BT
@@ -263,7 +269,8 @@ class HrvTrainerApp extends App.AppBase {
             }
             var dur = d["durationSec"];
             if (mView != null) {
-                mView.startSession(pacer, dur);
+                // `prep` letto sopra (riusato per la View, stessa fase silenziosa).
+                mView.startSession(pacer, dur, prep);
             } else {
                 Sys.println("onPhoneMessage: mView NULL on START_SESSION");
             }

@@ -49,7 +49,11 @@ class MockHeartRateSource implements HeartRateSource {
   }
 
   @override
-  Future<void> start({BreathingPattern? pattern, int? targetDurationSec}) async {
+  Future<void> start({
+    BreathingPattern? pattern,
+    int? targetDurationSec,
+    int? prepMs,
+  }) async {
     if (_state == HrSourceState.connected) return;
     _setState(HrSourceState.connecting);
     await Future<void>.delayed(const Duration(milliseconds: 300));

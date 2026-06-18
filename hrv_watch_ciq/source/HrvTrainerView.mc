@@ -30,6 +30,12 @@ class HrvTrainerView extends Ui.View {
     hidden var mPacer;
     hidden var mStartMs;
     hidden var mDurationSec;
+    // Fase di preparazione (ms): per i primi mPrepMs dopo START l'orologio resta
+    // SILENZIOSO (nessun cerchio respiro, nessuna vibrazione) e mostra
+    // "Preparati", poi parte a regime. Allinea l'avvio del respiro con il
+    // telefono e copre warm-up sensore + connessione. 0 = nessuna prep
+    // (sessioni standalone e check-in mattutino).
+    hidden var mPrepMs;
     hidden var mBpm;
     hidden var mSnapshot;
     hidden var mLastPhase;
@@ -70,6 +76,7 @@ class HrvTrainerView extends Ui.View {
         mPacer = null;
         mStartMs = 0;
         mDurationSec = null;
+        mPrepMs = 0;
         mBpm = null;
         mSnapshot = null;
         mLastPhase = -1;
@@ -81,11 +88,13 @@ class HrvTrainerView extends Ui.View {
     // === API per HrvTrainerApp =============================================
 
     // Chiamato dall'app quando arriva START_SESSION (dal telefono o locale).
-    function startSession(pacer, durationSec) {
+    // prepMs: durata della fase di preparazione silenziosa (0 = nessuna).
+    function startSession(pacer, durationSec, prepMs) {
         mScreen = SCREEN_ACTIVE;
         mActive = true;
         mPacer = pacer;
         mDurationSec = durationSec;
+        mPrepMs = (prepMs != null) ? prepMs : 0;
         mStartMs = Sys.getTimer();
         mBpm = null;
         mLastPhase = -1;
@@ -182,10 +191,13 @@ class HrvTrainerView extends Ui.View {
         if (!mActive) { return; }
 
         var elapsedMs = Sys.getTimer() - mStartMs;
+        // Tempo di SESSIONE (esclusa la prep): negativo durante la prep.
+        var pacerMs = elapsedMs - mPrepMs;
 
-        // Auto-stop al raggiungimento della durata target. Delegato all'app
+        // Auto-stop al raggiungimento della durata target, contata sul tempo di
+        // sessione: il tempo attivo totale è prep + durata. Delegato all'app
         // così che faccia anche FIT save + invio SESSION_SUMMARY se locale.
-        if (mDurationSec != null && elapsedMs >= mDurationSec * 1000) {
+        if (mDurationSec != null && pacerMs >= mDurationSec * 1000) {
             App.getApp().requestStop();
             return;
         }
@@ -201,8 +213,12 @@ class HrvTrainerView extends Ui.View {
             return;
         }
 
-        if (mPacer != null) {
-            mSnapshot = PacerCalc.compute(mPacer, elapsedMs);
+        // Durante la prep (pacerMs < 0): nessun pacer, nessuna vibrazione —
+        // l'orologio resta "silenzioso" così telefono e watch partono a regime
+        // nello stesso istante. mLastPhase resta -1 finché non parte il regime,
+        // così la prima fase (inspira) fa scattare la vibrazione.
+        if (mPacer != null && pacerMs >= 0) {
+            mSnapshot = PacerCalc.compute(mPacer, pacerMs);
             if (mSnapshot.phase != mLastPhase) {
                 onPhaseChange(mSnapshot.phase);
                 mLastPhase = mSnapshot.phase;
@@ -436,11 +452,28 @@ class HrvTrainerView extends Ui.View {
     // ----- ACTIVE ---------------------------------------------------------
 
     hidden function drawActive(dc, w, h, cx, cy) {
+        var pacerMs = (Sys.getTimer() - mStartMs) - mPrepMs;
+
+        // Fase di preparazione: "Preparati" + countdown, niente cerchio respiro
+        // (l'orologio è silenzioso). Si arrotonda per eccesso così va 10→1 come
+        // sul telefono.
+        if (pacerMs < 0) {
+            var prepLeft = ((-pacerMs) + 999) / 1000;
+            dc.drawText(cx, 78, Gfx.FONT_MEDIUM,
+                "Preparati", Gfx.TEXT_JUSTIFY_CENTER);
+            dc.drawText(cx, 108, Gfx.FONT_NUMBER_MEDIUM,
+                prepLeft.toString(), Gfx.TEXT_JUSTIFY_CENTER);
+            var bpmPrep = (mBpm != null) ? (mBpm.toString() + " bpm") : "--";
+            dc.drawText(cx, h - 26, Gfx.FONT_XTINY,
+                bpmPrep, Gfx.TEXT_JUSTIFY_CENTER);
+            return;
+        }
+
         // Countdown in alto-sinistra (LEFT-justified a x=8) per stare fuori
         // dalla zona del sub-display in alto a destra. Centrato in alto
-        // veniva tagliato dal cerchio nascosto.
+        // veniva tagliato dal cerchio nascosto. Sul tempo di sessione (pacerMs).
         if (mDurationSec != null) {
-            var remainingMs = mDurationSec * 1000 - (Sys.getTimer() - mStartMs);
+            var remainingMs = mDurationSec * 1000 - pacerMs;
             if (remainingMs < 0) { remainingMs = 0; }
             var remSec = remainingMs / 1000;
             var mm = remSec / 60;

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
+import '../../shared/connect_iq/widgets/watch_readiness_gate.dart';
 import '../../shared/hrv/breathing_pacer.dart';
 import '../../shared/hrv/session_models.dart';
 import '../../shared/hrv/widgets/live_session_view.dart';
@@ -84,19 +85,16 @@ class _TrainingScreenState extends ConsumerState<TrainingScreen>
   @override
   Widget build(BuildContext context) {
     ref.listen<TrainingState>(trainingControllerProvider, (prev, next) {
-      // Avvia il pacer del phone solo quando il TrainingController fissa
-      // startedAt — cioè al primo HR sample dal watch (o al fallback timeout).
-      // Stesso anchor temporale del countdown: così il pacer del phone non
-      // parte all'istante del tap "Avvia" lasciando il watch indietro di
-      // tutta la latenza openApplication/sendMessage del Connect IQ SDK
-      // (osservata fino a ~17 s quando l'app sul watch non è già aperta).
-      final wasWaiting = prev == null || prev.startedAt == null;
-      if (wasWaiting && next.startedAt != null && next.running) {
-        // startedAt è già retro-datato a mStartMs del watch (in coordinate
-        // phone), quindi all'avvio del ticker il watch respira da `offset`.
-        // Lo passiamo come startOffset così inspira/espira del phone
-        // combaciano col watch invece di ripartire da zero — che lasciava il
-        // cerchio del phone indietro di tutta la latenza BT/openApplication.
+      // Avvia il pacer dell'orb solo quando inizia il REGIME (fine prep), non
+      // al primo battito: durante la prep watch e telefono restano silenziosi e
+      // partono insieme. startOffset = now - startedAt: a fine prep ≈ 0 (orb a
+      // inizio respiro); se la connessione è stata lenta e la prep è già
+      // passata, l'orb parte a metà ciclo già allineato al watch.
+      final wasRegime =
+          prev != null && prev.startedAt != null && !prev.preparing;
+      final isRegime =
+          next.running && next.startedAt != null && !next.preparing;
+      if (!wasRegime && isRegime) {
         final offset = DateTime.now().difference(next.startedAt!);
         ref.read(pacerControllerProvider.notifier).start(startOffset: offset);
       }
@@ -104,23 +102,40 @@ class _TrainingScreenState extends ConsumerState<TrainingScreen>
         // Ferma il pacer ticker quando la sessione termina (auto-stop o
         // stop manuale). Provider non è più autoDispose quindi va spento.
         ref.read(pacerControllerProvider.notifier).pause();
+
+        // Annullata per assenza di dati dall'orologio (timeout 35 s): NON è una
+        // sessione completata. Errore + resta sul setup (running false →
+        // _buildSetup), niente sessione fantasma.
+        if (next.abortedNoData) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Nessun dato dall\'orologio: misura annullata. '
+                'Controlla la connessione e riprova.',
+              ),
+              duration: Duration(seconds: 4),
+            ),
+          );
+          return;
+        }
+
+        // Nessuna sessione salvata (annullata in connessione/preparazione, o
+        // stop senza save): esci in silenzio, niente messaggio "completata".
+        final id = next.lastSessionId;
+        if (id == null) {
+          if (context.canPop()) context.pop();
+          return;
+        }
+
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Sessione completata e salvata'),
             duration: Duration(seconds: 2),
           ),
         );
-        // Se la sessione è stata salvata mostriamo subito il dettaglio
-        // della sessione appena conclusa, sostituendo la route /training
-        // nello stack così che il back system riporti l'utente in home.
-        // Senza id (es. stop senza save / senza startedAt) ricadiamo sul
-        // pop verso la schermata che ha aperto il training.
-        final id = next.lastSessionId;
-        if (id != null) {
-          context.pushReplacement('/history/session/$id');
-        } else if (context.canPop()) {
-          context.pop();
-        }
+        // Mostra subito il dettaglio della sessione conclusa, sostituendo la
+        // route /training nello stack così che il back riporti in home.
+        context.pushReplacement('/history/session/$id');
       }
     });
 
@@ -129,6 +144,22 @@ class _TrainingScreenState extends ConsumerState<TrainingScreen>
     // pacer (20 Hz) non ricostruisce chart/metrics/progress.
     final running = ref.watch(
       trainingControllerProvider.select((s) => s.running),
+    );
+
+    // Fase di connessione: sessione avviata ma primo battito non ancora
+    // arrivato (warm-up sensore + latenza BT, osservata 3-14 s). Mostriamo una
+    // vista d'attesa dedicata invece dell'orb fermo — che sembrava un guasto di
+    // connessione. I minuti partono a regime solo quando l'orologio inizia
+    // davvero a inviare battiti (startedAt fissato).
+    final waiting = ref.watch(
+      trainingControllerProvider.select((s) => s.waitingForWatch),
+    );
+
+    // Fase di PREPARAZIONE coordinata: connesso (primo battito arrivato), ma
+    // l'inizio del pacing è ancora nel futuro. Orologio e telefono restano
+    // silenziosi e mostrano "Preparati" finché non parte il regime, insieme.
+    final preparing = ref.watch(
+      trainingControllerProvider.select((s) => s.preparing),
     );
 
     // Tieni lo schermo acceso durante la sessione (biofeedback richiede
@@ -162,25 +193,41 @@ class _TrainingScreenState extends ConsumerState<TrainingScreen>
                       .stop(save: true);
                 }
               },
-            )
+            ),
           ],
         ),
         // Stesso layout della misura morning check-in: status → countdown →
         // BPM → grafico HR (Expanded) → statistiche. L'UNICA aggiunta è l'orb
         // del respiro guida in cima (rimpicciolito).
         body: SafeArea(
-          child: Padding(
+          child: waiting
+              ? WatchWaitingView(
+                  title: 'Connessione con l\'orologio…',
+                  onCancel: () => ref
+                      .read(trainingControllerProvider.notifier)
+                      .stop(save: false),
+                )
+              : preparing
+              ? _PrepView(
+                  onCancel: () => ref
+                      .read(trainingControllerProvider.notifier)
+                      .stop(save: false),
+                )
+              : Padding(
             padding: const EdgeInsets.fromLTRB(24, 12, 24, 16),
             // L'orb è dimensionato sull'altezza disponibile (cap 160): su
             // schermi bassi (split-screen, testo ingrandito) si rimpicciolisce
             // da solo così il readout sotto non manda la Column in overflow.
             child: LayoutBuilder(
               builder: (context, constraints) {
-                final orbSize =
-                    (constraints.maxHeight * 0.24).clamp(96.0, 160.0);
+                final orbSize = (constraints.maxHeight * 0.24).clamp(
+                  96.0,
+                  160.0,
+                );
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    const _TrainingConnectionBanner(),
                     // Indicatore inspira/espira: unico elemento in più rispetto
                     // al morning check-in.
                     Center(child: _OrbView(size: orbSize)),
@@ -249,8 +296,9 @@ class _TrainingScreenState extends ConsumerState<TrainingScreen>
                     width: double.infinity,
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color:
-                          scheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                      color: scheme.surfaceContainerHighest.withValues(
+                        alpha: 0.5,
+                      ),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Row(
@@ -279,8 +327,9 @@ class _TrainingScreenState extends ConsumerState<TrainingScreen>
                       Expanded(
                         child: Text(
                           'pre-compilati dal contesto, regolabili',
-                          style: theme.textTheme.labelSmall
-                              ?.copyWith(color: scheme.onSurfaceVariant),
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
                         ),
                       ),
                     ],
@@ -339,8 +388,9 @@ class _TrainingScreenState extends ConsumerState<TrainingScreen>
                   const SizedBox(height: 6),
                   Text(
                     'Si sincronizza con l\'orologio all\'avvio',
-                    style: theme.textTheme.labelSmall
-                        ?.copyWith(color: scheme.onSurfaceVariant),
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
                 ],
               ),
@@ -353,47 +403,49 @@ class _TrainingScreenState extends ConsumerState<TrainingScreen>
 
   Future<void> _onStart() async {
     debugPrint('[TRAIN] Avvia pressed');
-    ref.read(pacerPreferencesProvider.notifier).state =
-        ref.read(pacerPreferencesProvider).copyWith(pattern: _pattern);
-    await ref.read(trainingControllerProvider.notifier).start(
-          _pattern,
-          targetDurationSec: _durationMin * 60,
-          tag: _tag,
-        );
+    // Gate di connettività: senza un link confermato col watch NON avviamo la
+    // sessione (niente più "aspetta e parti comunque" senza dati). Il gate
+    // offre le azioni per risolvere (Attiva BT / Riconnetti / Cerca orologio).
+    final ready = await ensureWatchReady(context, ref);
+    if (!ready || !mounted) return;
+    ref.read(pacerPreferencesProvider.notifier).state = ref
+        .read(pacerPreferencesProvider)
+        .copyWith(pattern: _pattern);
+    await ref
+        .read(trainingControllerProvider.notifier)
+        .start(_pattern, targetDurationSec: _durationMin * 60, tag: _tag);
     // Il pacer NON parte qui: lo avvia il ref.listen quando arriva il primo HR
     // sample dal watch, così ciclo ispira/espira su phone e watch combaciano.
     debugPrint('[TRAIN] training started, pacer waiting for watch');
   }
 
   IconData _tagIcon(SessionTag t) => switch (t) {
-        SessionTag.morning => Icons.wb_sunny_outlined,
-        SessionTag.preWorkout => Icons.fitness_center,
-        SessionTag.postWorkout => Icons.ac_unit,
-        SessionTag.sleep => Icons.bedtime_outlined,
-        SessionTag.stress => Icons.bolt_outlined,
-        SessionTag.recovery => Icons.spa_outlined,
-        SessionTag.general => Icons.tune,
-      };
+    SessionTag.morning => Icons.wb_sunny_outlined,
+    SessionTag.preWorkout => Icons.fitness_center,
+    SessionTag.postWorkout => Icons.ac_unit,
+    SessionTag.sleep => Icons.bedtime_outlined,
+    SessionTag.stress => Icons.bolt_outlined,
+    SessionTag.recovery => Icons.spa_outlined,
+    SessionTag.general => Icons.tune,
+  };
 
   Future<bool?> _confirmStop() => showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Terminare la sessione?'),
-          content: const Text(
-              'I dati raccolti verranno salvati nello storico.'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('Continua'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('Termina'),
-            ),
-          ],
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Terminare la sessione?'),
+      content: const Text('I dati raccolti verranno salvati nello storico.'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(false),
+          child: const Text('Continua'),
         ),
-      );
-
+        FilledButton(
+          onPressed: () => Navigator.of(ctx).pop(true),
+          child: const Text('Termina'),
+        ),
+      ],
+    ),
+  );
 }
 
 /// Intestazione di una riga di impostazione: etichetta a sinistra, valore in
@@ -413,9 +465,7 @@ class _SettingHeader extends StatelessWidget {
       children: [
         Row(
           children: [
-            Expanded(
-              child: Text(label, style: theme.textTheme.titleSmall),
-            ),
+            Expanded(child: Text(label, style: theme.textTheme.titleSmall)),
             Text(
               value,
               style: theme.textTheme.titleMedium?.copyWith(
@@ -428,8 +478,9 @@ class _SettingHeader extends StatelessWidget {
         if (hint != null)
           Text(
             hint!,
-            style: theme.textTheme.labelSmall
-                ?.copyWith(color: scheme.onSurfaceVariant),
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
           ),
       ],
     );
@@ -463,8 +514,10 @@ class _AssessmentHint extends StatelessWidget {
               child: Text(
                 'Non hai ancora la tua frequenza di risonanza: fai '
                 'l\'Assessment per personalizzare il respiro.',
-                style: theme.textTheme.bodySmall
-                    ?.copyWith(color: scheme.onSurfaceVariant, height: 1.3),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                  height: 1.3,
+                ),
               ),
             ),
             Icon(Icons.chevron_right, color: scheme.onSurfaceVariant),
@@ -507,6 +560,101 @@ class _TrainingStatus extends ConsumerWidget {
       style: theme.textTheme.titleMedium?.copyWith(
         color: scheme.onSurfaceVariant,
       ),
+    );
+  }
+}
+
+/// Vista della fase di PREPARAZIONE coordinata: connessi, ma il respiro guida
+/// non è ancora partito. Mostra "Preparati" + countdown dei secondi che mancano
+/// all'avvio; nello stesso intervallo l'orologio resta silenzioso e mostra la
+/// sua "Preparati", così i due partono a regime insieme. Ticka via timer
+/// interno perché [TrainingState.prepSecLeft] dipende dall'ora corrente.
+class _PrepView extends ConsumerStatefulWidget {
+  final VoidCallback onCancel;
+  const _PrepView({required this.onCancel});
+
+  @override
+  ConsumerState<_PrepView> createState() => _PrepViewState();
+}
+
+class _PrepViewState extends ConsumerState<_PrepView> {
+  Timer? _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    _ticker = Timer.periodic(
+      const Duration(milliseconds: 200),
+      (_) => setState(() {}),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final secLeft = ref.read(trainingControllerProvider).prepSecLeft;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.self_improvement, size: 48, color: scheme.primary),
+            const SizedBox(height: 20),
+            Text('Preparati', style: theme.textTheme.titleLarge),
+            const SizedBox(height: 8),
+            Text(
+              secLeft > 0 ? 'Si parte tra $secLeft s' : 'Si parte…',
+              style: theme.textTheme.displaySmall?.copyWith(
+                fontWeight: FontWeight.w300,
+                color: scheme.primary,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Connesso. Mettiti comodo e tieni il polso fermo: orologio e '
+              'telefono partono insieme a fine preparazione.',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+                height: 1.35,
+              ),
+            ),
+            const SizedBox(height: 28),
+            OutlinedButton(
+              onPressed: widget.onCancel,
+              child: const Text('Annulla'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Banner non bloccante mostrato quando il flusso di battiti si interrompe a
+/// metà sessione (connessione persa). Watcha solo il flag dedicato così non
+/// ricostruisce al ritmo dei battiti. Occupa spazio solo quando attivo.
+class _TrainingConnectionBanner extends ConsumerWidget {
+  const _TrainingConnectionBanner();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final lost = ref.watch(
+      trainingControllerProvider.select((s) => s.connectionLost),
+    );
+    if (!lost) return const SizedBox.shrink();
+    return const Padding(
+      padding: EdgeInsets.only(bottom: 8),
+      child: WatchConnectionLostBanner(),
     );
   }
 }

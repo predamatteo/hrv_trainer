@@ -87,23 +87,36 @@ class GarminCiqSource implements HeartRateSource {
         // Aggiungendo δ a watchElapsedMs, t0 = now - watchElapsedMs allinea
         // il phone esattamente a mStartMs del watch (in coordinate phone).
         final elapsedRaw = (raw['elapsedMs'] as num?)?.toInt();
+        // pacerMs: tempo di SESSIONE del watch (elapsed meno la prep). Presente
+        // solo sui firmware con prep coordinata; se assente il phone ricade sul
+        // comportamento senza preparazione.
+        final pacerRaw = (raw['pacerMs'] as num?)?.toInt();
         final phoneTxMs = (raw['phoneTxMs'] as num?)?.toInt();
-        int? watchElapsedMs = elapsedRaw;
+        int? oneWayMs;
         if (elapsedRaw != null && phoneTxMs != null) {
           final roundTripMs = DateTime.now().millisecondsSinceEpoch - phoneTxMs;
           // Clamp >= 0 perché clock skew o jitter possono produrre stime
           // negative su round-trip molto piccoli. /2 perché il roundTrip
           // include sia send sia recv: assumiamo simmetria.
-          final oneWayMs = ((roundTripMs - elapsedRaw) / 2)
-              .round()
-              .clamp(0, roundTripMs);
-          watchElapsedMs = elapsedRaw + oneWayMs;
+          oneWayMs = ((roundTripMs - elapsedRaw) / 2).round().clamp(
+                0,
+                roundTripMs,
+              );
         }
+        final watchElapsedMs = (elapsedRaw != null && oneWayMs != null)
+            ? elapsedRaw + oneWayMs
+            : elapsedRaw;
+        // Stessa correzione one-way su pacerMs (è il tempo di sessione "ad
+        // adesso" in coordinate phone).
+        final watchPacerMs = (pacerRaw != null && oneWayMs != null)
+            ? pacerRaw + oneWayMs
+            : pacerRaw;
         _hrController.add(HeartRateEvent(
           timestamp: DateTime.now(),
           bpm: (raw['bpm'] as num).toInt(),
           rrMs: (raw['rr'] as num?)?.toInt(),
           watchElapsedMs: watchElapsedMs,
+          watchPacerMs: watchPacerMs,
         ));
       case 'HRV_RESULT':
         final reqId = raw['reqId'] as int?;
@@ -153,7 +166,11 @@ class GarminCiqSource implements HeartRateSource {
   }
 
   @override
-  Future<void> start({BreathingPattern? pattern, int? targetDurationSec}) async {
+  Future<void> start({
+    BreathingPattern? pattern,
+    int? targetDurationSec,
+    int? prepMs,
+  }) async {
     _setState(HrSourceState.connecting);
     final args = <String, Object?>{'hz': 4};
     if (pattern != null) {
@@ -164,6 +181,13 @@ class GarminCiqSource implements HeartRateSource {
     }
     if (targetDurationSec != null) {
       args['durationSec'] = targetDurationSec;
+    }
+    // prepMs: fase silenziosa iniziale lato watch (vedi HrvTrainerView).
+    // Watch più vecchi senza supporto prep ignorano il campo: in quel caso il
+    // telefono ricade sul comportamento corrente (nessun pacerMs → orb agganciato
+    // a watchElapsedMs, vista d'attesa fino al primo battito).
+    if (prepMs != null && prepMs > 0) {
+      args['prepMs'] = prepMs;
     }
     try {
       await _channel.invokeMethod<void>('start', args);

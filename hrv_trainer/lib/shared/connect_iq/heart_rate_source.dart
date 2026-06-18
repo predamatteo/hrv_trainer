@@ -22,11 +22,20 @@ class HeartRateEvent {
   /// START_SESSION, il phone riceve il primo HR sample 3-5 s dopo).
   final int? watchElapsedMs;
 
+  /// Tempo di SESSIONE del watch (ms) = elapsed meno la fase di preparazione:
+  /// negativo durante la prep, 0 all'avvio del respiro guida, crescente dopo.
+  /// È l'orologio "master" cui il pacer dell'orb si aggancia. `null` se il
+  /// watch non lo invia (firmware senza prep) → il phone ricade sul
+  /// comportamento senza preparazione. Corretto per la latenza BT come
+  /// [watchElapsedMs].
+  final int? watchPacerMs;
+
   const HeartRateEvent({
     required this.timestamp,
     required this.bpm,
     this.rrMs,
     this.watchElapsedMs,
+    this.watchPacerMs,
   });
 
   RrInterval toRr() => RrInterval(
@@ -72,7 +81,18 @@ abstract class HeartRateSource {
   /// e generare feedback aptico al cambio fase, senza dipendere da
   /// messaggi BT continui dal telefono. Implementazioni che non parlano
   /// con un watch (es. mock) li ignorano.
-  Future<void> start({BreathingPattern? pattern, int? targetDurationSec});
+  ///
+  /// [prepMs] (opzionale) è una fase di PREPARAZIONE iniziale durante la quale
+  /// il watch resta silenzioso (nessun respiro guida, nessuna vibrazione) e
+  /// mostra "Preparati"; trascorsa, watch e telefono partono a regime nello
+  /// stesso istante. Serve ad assorbire warm-up sensore + latenza di
+  /// connessione senza lasciare l'orb del telefono congelato. Sorgenti senza
+  /// watch lo ignorano.
+  Future<void> start({
+    BreathingPattern? pattern,
+    int? targetDurationSec,
+    int? prepMs,
+  });
 
   /// Ferma la sessione.
   Future<void> stop();

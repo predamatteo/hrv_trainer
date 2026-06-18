@@ -113,6 +113,38 @@ class PacerController extends StateNotifier<PacerTick> {
     _timer = Timer.periodic(_tickInterval, (_) => _tick());
   }
 
+  // Riaggancio (closed-loop) al clock del watch.
+  // _maxResyncStepMs: correzione massima per chiamata → limita lo scatto
+  //   visibile dell'orb quando arriva una stima rumorosa.
+  // _resyncGain: guadagno proporzionale → corregge solo una frazione
+  //   dell'errore per battito, filtrando il jitter di watchElapsedMs (la
+  //   stima oneWay del round-trip BT è rumorosa, garmin_ciq_source.dart).
+  // _resyncDeadbandMs: sotto soglia non correggiamo → niente micro-jitter a
+  //   regime quando l'allineamento è già buono.
+  static const _maxResyncStepMs = 150;
+  static const _resyncGain = 0.3;
+  static const _resyncDeadbandMs = 40;
+
+  /// Ri-aggancia il pacer del phone al clock del watch usando l'elapsed che il
+  /// watch invia in ogni HR_SAMPLE (~1 Hz). Nudga [_startOffset] verso il
+  /// target con guadagno + cap, così l'errore costante dell'aggancio iniziale
+  /// e il drift fra i due oscillatori (Stopwatch phone vs Sys.getTimer watch)
+  /// NON si accumulano per tutta la sessione — era la causa dell'orb "qualche
+  /// secondo dietro" la vibrazione. Va chiamato solo a ticker attivo: no-op
+  /// altrimenti (pacer libero della PacerScreen, mock, o non ancora partito).
+  void resync(int watchElapsedMs) {
+    if (_timer == null) return;
+    final currentMs =
+        _watch.elapsed.inMilliseconds + _startOffset.inMilliseconds;
+    final errorMs = watchElapsedMs - currentMs;
+    if (errorMs.abs() < _resyncDeadbandMs) return;
+    final stepMs = (errorMs * _resyncGain)
+        .round()
+        .clamp(-_maxResyncStepMs, _maxResyncStepMs);
+    if (stepMs == 0) return;
+    _startOffset += Duration(milliseconds: stepMs);
+  }
+
   int _tickCount = 0;
   void _tick() {
     if (!mounted) return;

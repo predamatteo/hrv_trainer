@@ -39,6 +39,12 @@ class HrSession {
     // ogni HR_SAMPLE così il phone può stimare la latenza BT one-way e
     // allineare il proprio countdown a mStartMs di questo session.
     hidden var mPhoneTxMs;
+    // Durata della fase di preparazione (ms). Inviata in HR_SAMPLE come
+    // "pacerMs" = elapsedMs - mPrepMs (tempo di SESSIONE, negativo durante la
+    // prep): è insieme il valore e il SEGNALE che questo watch supporta la prep
+    // coordinata. Phone più vecchi (senza prep) non lo leggono; phone nuovi con
+    // watch vecchio non lo ricevono e ricadono sul comportamento senza prep.
+    hidden var mPrepMs;
 
     function initialize() {
         mActive = false;
@@ -53,6 +59,7 @@ class HrSession {
         mIsLocal = false;
         mPattern = null;
         mPhoneTxMs = null;
+        mPrepMs = 0;
     }
 
     function setView(v) { mView = v; }
@@ -68,20 +75,22 @@ class HrSession {
     // Connect come "Breathwork". Default false: lo storico HRV è già
     // gestito dall'app mobile, evitiamo duplicazione e il fastidioso
     // "Non sincronizzato" sul watch.
-    function start(hz, recordFit) {
-        startInternal(false, null, recordFit);
+    function start(hz, recordFit, prepMs) {
+        startInternal(false, null, recordFit, prepMs);
     }
 
     function startLocal(hz, pacer, recordFit) {
-        startInternal(true, pacer, recordFit);
+        // Standalone (avvio dal watch): nessuna prep.
+        startInternal(true, pacer, recordFit, 0);
     }
 
-    hidden function startInternal(isLocal, pacer, recordFit) {
+    hidden function startInternal(isLocal, pacer, recordFit, prepMs) {
         Sys.println("HrSession.startInternal: enter isLocal=" + isLocal + " recordFit=" + recordFit);
         if (mActive) { return; }
         mActive = true;
         mIsLocal = isLocal;
         mPattern = pacer;
+        mPrepMs = (prepMs != null) ? prepMs : 0;
         mStartMs = Sys.getTimer();
         // Time.now().value() ritorna Number (Int32 signed): epoch seconds
         // = ~1.76e9 nel 2026, dentro range. Ma `Number * Number` in Monkey C
@@ -290,6 +299,11 @@ class HrSession {
             // 3-5 s dopo (attivazione sensore HR ~1 Hz + latenza BT). Senza
             // questo campo i due countdown divergono di quel delta.
             "elapsedMs" => Sys.getTimer() - mStartMs,
+            // Tempo di SESSIONE = elapsed meno la prep (negativo durante la
+            // prep). Il phone vi aggancia l'orb del respiro guida; la sua
+            // presenza segnala anche che questo watch supporta la prep
+            // coordinata (assente sui watch vecchi → phone ricade su no-prep).
+            "pacerMs" => (Sys.getTimer() - mStartMs) - mPrepMs,
             // Echo del phoneTxMs ricevuto in START_SESSION. Il phone calcola:
             //   roundTrip = now - phoneTxMs
             //   oneWayMs ≈ (roundTrip - elapsedMs) / 2     [simmetria up/down]

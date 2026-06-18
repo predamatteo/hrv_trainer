@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../shared/connect_iq/heart_rate_source.dart';
 import '../../../shared/connect_iq/hr_source_provider.dart';
+import '../../../shared/connect_iq/watch_readiness.dart';
 import '../../../shared/hrv/breathing_pacer.dart';
 import '../../../shared/hrv/hrv_metrics.dart';
 import '../../../shared/hrv/morning_reading.dart';
@@ -25,6 +26,20 @@ class MorningCheckInState {
   final CheckInPhase phase;
   final Posture posture;
   final MorningProtocol protocol;
+
+  /// True dall'avvio finché non arriva il PRIMO battito dall'orologio. Durante
+  /// l'attesa il countdown NON parte (niente più cattura a vuoto se il watch
+  /// non risponde). La schermata mostra una vista "in attesa".
+  final bool waitingForWatch;
+
+  /// True quando la misura è stata annullata perché l'orologio non ha mai
+  /// inviato un battito entro [kWatchFirstSampleTimeout]: la UI segnala
+  /// l'errore e resta su idle invece di passare a una review vuota.
+  final bool abortedNoData;
+
+  /// True quando, a cattura avviata, il flusso di battiti si interrompe oltre
+  /// [kWatchStaleDataTimeout]. Banner non bloccante; si azzera alla ripresa.
+  final bool connectionLost;
 
   /// True durante i secondi iniziali di assestamento (no raccolta dati).
   final bool settling;
@@ -53,6 +68,9 @@ class MorningCheckInState {
     required this.phase,
     required this.posture,
     required this.protocol,
+    this.waitingForWatch = false,
+    this.abortedNoData = false,
+    this.connectionLost = false,
     this.settling = false,
     this.secLeft = 0,
     this.currentBpm,
@@ -67,6 +85,9 @@ class MorningCheckInState {
     CheckInPhase? phase,
     Posture? posture,
     MorningProtocol? protocol,
+    bool? waitingForWatch,
+    bool? abortedNoData,
+    bool? connectionLost,
     bool? settling,
     int? secLeft,
     int? currentBpm,
@@ -75,20 +96,22 @@ class MorningCheckInState {
     HrvMetrics? liveMetrics,
     HrvMetrics? metrics,
     int? savedSessionId,
-  }) =>
-      MorningCheckInState(
-        phase: phase ?? this.phase,
-        posture: posture ?? this.posture,
-        protocol: protocol ?? this.protocol,
-        settling: settling ?? this.settling,
-        secLeft: secLeft ?? this.secLeft,
-        currentBpm: currentBpm ?? this.currentBpm,
-        sampleCount: sampleCount ?? this.sampleCount,
-        hrTrace: hrTrace ?? this.hrTrace,
-        liveMetrics: liveMetrics ?? this.liveMetrics,
-        metrics: metrics ?? this.metrics,
-        savedSessionId: savedSessionId ?? this.savedSessionId,
-      );
+  }) => MorningCheckInState(
+    phase: phase ?? this.phase,
+    posture: posture ?? this.posture,
+    protocol: protocol ?? this.protocol,
+    waitingForWatch: waitingForWatch ?? this.waitingForWatch,
+    abortedNoData: abortedNoData ?? this.abortedNoData,
+    connectionLost: connectionLost ?? this.connectionLost,
+    settling: settling ?? this.settling,
+    secLeft: secLeft ?? this.secLeft,
+    currentBpm: currentBpm ?? this.currentBpm,
+    sampleCount: sampleCount ?? this.sampleCount,
+    hrTrace: hrTrace ?? this.hrTrace,
+    liveMetrics: liveMetrics ?? this.liveMetrics,
+    metrics: metrics ?? this.metrics,
+    savedSessionId: savedSessionId ?? this.savedSessionId,
+  );
 }
 
 class MorningCheckInController extends StateNotifier<MorningCheckInState> {
@@ -96,6 +119,12 @@ class MorningCheckInController extends StateNotifier<MorningCheckInState> {
   StreamSubscription<HeartRateEvent>? _sub;
   Timer? _timer;
   Timer? _metricsTimer;
+  // Guardia "nessun dato": annulla la misura se nessun battito arriva entro
+  // [kWatchFirstSampleTimeout]. Disarmata dal primo battito.
+  Timer? _firstSampleTimeout;
+  // Watchdog del flusso battiti durante la cattura: alza connectionLost se i
+  // battiti si interrompono. Resettato ad ogni battito.
+  Timer? _staleDataTimer;
   DateTime? _phaseStart;
   final List<RrInterval> _window = [];
 
@@ -106,12 +135,22 @@ class MorningCheckInController extends StateNotifier<MorningCheckInState> {
   /// scarta i primi battiti instabili (attivazione sensore, transitorio).
   static const settleSec = 10;
 
+  /// Margine di guardia (s) aggiunto alla durata inviata al watch. Il telefono
+  /// è il driver e ferma a fine cattura (vedi _finish → src.stop): questo
+  /// margine fa sì che l'auto-stop locale del watch resti un BACKUP che non
+  /// tronca MAI la finestra del telefono. Senza, l'auto-stop esatto del watch
+  /// scattava prima che lo STOP del telefono arrivasse via BT, spegnendo il
+  /// sensore e facendo perdere gli ultimi battiti (la misura finiva corta).
+  static const _watchBackupGuardSec = 10;
+
   MorningCheckInController(this.ref)
-      : super(const MorningCheckInState(
+    : super(
+        const MorningCheckInState(
           phase: CheckInPhase.idle,
           posture: Posture.seated,
           protocol: MorningProtocol.seated60,
-        ));
+        ),
+      );
 
   void setPosture(Posture p) {
     if (state.phase != CheckInPhase.idle) return;
@@ -128,31 +167,78 @@ class MorningCheckInController extends StateNotifier<MorningCheckInState> {
     _sub?.cancel();
     _timer?.cancel();
     _metricsTimer?.cancel();
+    _firstSampleTimeout?.cancel();
+    _staleDataTimer?.cancel();
     _window.clear();
+    // Il countdown NON parte qui: _phaseStart resta null finché non arriva il
+    // primo battito (vedi _onBeat). Così l'assestamento + cattura cominciano a
+    // contare solo quando il watch sta davvero misurando, invece di scorrere a
+    // vuoto se l'orologio non risponde.
+    _phaseStart = null;
 
     final src = ref.read(heartRateSourceProvider);
     final total = settleSec + state.protocol.captureSec;
-    // Niente pattern → misura SPONTANEA (nessun pacer). La durata viene
-    // comunque inviata al watch così mostra un countdown e ha un auto-stop
-    // di backup, ma il telefono è il driver e ferma a fine cattura.
-    await src.start(targetDurationSec: total);
+    // Niente pattern → misura SPONTANEA (nessun pacer). La durata inviata al
+    // watch include un margine di guardia (vedi _watchBackupGuardSec) così il
+    // suo auto-stop resta un backup che non tronca la cattura: il telefono è
+    // il driver e ferma a fine cattura.
+    await src.start(targetDurationSec: total + _watchBackupGuardSec);
 
-    _phaseStart = DateTime.now();
-    state = state.copyWith(
+    state = MorningCheckInState(
       phase: CheckInPhase.measuring,
+      posture: state.posture,
+      protocol: state.protocol,
+      waitingForWatch: true,
       settling: true,
       secLeft: settleSec,
-      currentBpm: null,
-      sampleCount: 0,
-      hrTrace: const [],
     );
 
     _sub = src.heartRateStream.listen(_onBeat);
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
-    // Anteprima metriche ogni 5s (come nel training): dà un RMSSD "live" mentre
-    // si misura. È un preview, il valore definitivo è calcolato in `_finish`.
-    _metricsTimer =
-        Timer.periodic(const Duration(seconds: 5), (_) => _recomputeLive());
+    // Guardia "nessun dato": se l'orologio non manda alcun battito entro il
+    // timeout, annulla con errore invece di passare a una review vuota.
+    _firstSampleTimeout = Timer(kWatchFirstSampleTimeout, () {
+      if (state.phase == CheckInPhase.measuring && _phaseStart == null) {
+        _abortNoData();
+      }
+    });
+    // _timer e _metricsTimer vengono avviati dal primo battito in _onBeat.
+  }
+
+  /// Annulla la misura perché l'orologio non ha inviato dati: ferma la
+  /// sorgente e torna a idle con `abortedNoData:true`. La UI mostra l'errore.
+  Future<void> _abortNoData() async {
+    _timer?.cancel();
+    _timer = null;
+    _metricsTimer?.cancel();
+    _metricsTimer = null;
+    _firstSampleTimeout?.cancel();
+    _firstSampleTimeout = null;
+    _staleDataTimer?.cancel();
+    _staleDataTimer = null;
+    _sub?.cancel();
+    _sub = null;
+    try {
+      await ref.read(heartRateSourceProvider).stop();
+    } catch (_) {}
+    _window.clear();
+    state = MorningCheckInState(
+      phase: CheckInPhase.idle,
+      posture: state.posture,
+      protocol: state.protocol,
+      abortedNoData: true,
+    );
+  }
+
+  /// (Ri)arma il watchdog del flusso battiti durante la cattura.
+  void _armStaleDataWatchdog() {
+    _staleDataTimer?.cancel();
+    _staleDataTimer = Timer(kWatchStaleDataTimeout, () {
+      if (state.phase == CheckInPhase.measuring &&
+          _phaseStart != null &&
+          !state.connectionLost) {
+        state = state.copyWith(connectionLost: true);
+      }
+    });
   }
 
   void _tick() {
@@ -176,8 +262,43 @@ class MorningCheckInController extends StateNotifier<MorningCheckInState> {
   }
 
   void _onBeat(HeartRateEvent e) {
-    final startedAt = _phaseStart;
-    if (startedAt == null) return;
+    // Primo battito: il watch sta misurando davvero. Ancoriamo qui l'inizio di
+    // assestamento+cattura e facciamo partire i timer (prima erano fermi). Da
+    // questo istante disarmiamo la guardia "nessun dato".
+    if (_phaseStart == null) {
+      // Aggancia l'inizio al clock del watch (come il training): retro-data
+      // _phaseStart di watchElapsedMs, così assestamento+cattura del telefono
+      // contano dallo STESSO istante del watch (mStartMs) invece di partire
+      // 3-5s dopo (warm-up sensore + latenza BT) e far divergere i due
+      // countdown. Stessa guardia anti-stale del training: un watchElapsedMs
+      // fuori range (residuo di un loop sensori non resettato) ancorerebbe il
+      // countdown a ~0 facendo finire subito la misura → in quel caso si
+      // parte da adesso.
+      final raw = e.watchElapsedMs;
+      final maxMs = (settleSec + state.protocol.captureSec) * 1000;
+      final elapsedMs = (raw != null && raw >= 0 && raw <= maxMs) ? raw : null;
+      _phaseStart = elapsedMs != null
+          ? DateTime.now().subtract(Duration(milliseconds: elapsedMs))
+          : DateTime.now();
+      _firstSampleTimeout?.cancel();
+      _firstSampleTimeout = null;
+      _timer = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
+      // Anteprima metriche ogni 5s (come nel training): RMSSD "live" mentre si
+      // misura. È un preview, il valore definitivo è calcolato in `_finish`.
+      _metricsTimer = Timer.periodic(
+        const Duration(seconds: 5),
+        (_) => _recomputeLive(),
+      );
+      _armStaleDataWatchdog();
+      state = state.copyWith(waitingForWatch: false);
+    } else {
+      // Flusso vivo: rilancia il watchdog e azzera l'eventuale "connessione persa".
+      _armStaleDataWatchdog();
+      if (state.connectionLost) {
+        state = state.copyWith(connectionLost: false);
+      }
+    }
+    final startedAt = _phaseStart!;
     final elapsed = DateTime.now().difference(startedAt).inSeconds;
     final bpm = e.bpm;
     // Trace HR sempre (anche in assestamento): riempie subito la curva e mostra
@@ -215,6 +336,10 @@ class MorningCheckInController extends StateNotifier<MorningCheckInState> {
     _timer = null;
     _metricsTimer?.cancel();
     _metricsTimer = null;
+    _firstSampleTimeout?.cancel();
+    _firstSampleTimeout = null;
+    _staleDataTimer?.cancel();
+    _staleDataTimer = null;
     _sub?.cancel();
     _sub = null;
     final src = ref.read(heartRateSourceProvider);
@@ -265,6 +390,10 @@ class MorningCheckInController extends StateNotifier<MorningCheckInState> {
     _timer = null;
     _metricsTimer?.cancel();
     _metricsTimer = null;
+    _firstSampleTimeout?.cancel();
+    _firstSampleTimeout = null;
+    _staleDataTimer?.cancel();
+    _staleDataTimer = null;
     _sub?.cancel();
     _sub = null;
     if (state.phase == CheckInPhase.measuring) {
@@ -284,12 +413,15 @@ class MorningCheckInController extends StateNotifier<MorningCheckInState> {
   void dispose() {
     _timer?.cancel();
     _metricsTimer?.cancel();
+    _firstSampleTimeout?.cancel();
+    _staleDataTimer?.cancel();
     _sub?.cancel();
     super.dispose();
   }
 }
 
-final morningCheckInControllerProvider = StateNotifierProvider.autoDispose<
-    MorningCheckInController, MorningCheckInState>(
-  (ref) => MorningCheckInController(ref),
-);
+final morningCheckInControllerProvider =
+    StateNotifierProvider.autoDispose<
+      MorningCheckInController,
+      MorningCheckInState
+    >((ref) => MorningCheckInController(ref));

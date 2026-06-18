@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../shared/connect_iq/heart_rate_source.dart';
 import '../../../shared/connect_iq/hr_source_provider.dart';
+import '../../../shared/connect_iq/watch_readiness.dart';
 import '../../../shared/hrv/breathing_pacer.dart';
 import '../../../shared/hrv/hrv_metrics.dart';
 import '../../../shared/hrv/rr_interval.dart';
@@ -12,6 +13,7 @@ import '../../../shared/notifications/reminder_settings.dart';
 import '../../../shared/storage/session_repository.dart';
 import '../../history/history_screen.dart' show sessionsListProvider;
 import '../../home/state/readiness_provider.dart';
+import '../../pacer/state/pacer_controller.dart';
 
 class TrainingState {
   final bool running;
@@ -27,6 +29,28 @@ class TrainingState {
   // dettaglio della sessione conclusa invece di tornare in home.
   final int? lastSessionId;
 
+  /// True quando la sessione è stata annullata perché l'orologio non ha mai
+  /// inviato un battito entro [kWatchFirstSampleTimeout]. La UI lo usa per
+  /// mostrare un errore ("nessun dato dall'orologio") e tornare al setup,
+  /// invece di salvare/navigare a una sessione fantasma vuota.
+  final bool abortedNoData;
+
+  /// True quando, durante una cattura già avviata, il flusso di battiti si è
+  /// interrotto oltre [kWatchStaleDataTimeout]. Mostra un banner non bloccante;
+  /// si azzera appena i battiti riprendono.
+  final bool connectionLost;
+
+  /// True finché stiamo aspettando il primo battito dall'orologio (sessione
+  /// avviata ma `startedAt` non ancora fissato). Derivato, comodo per la UI.
+  bool get waitingForWatch => running && startedAt == null;
+
+  /// True durante la fase di PREPARAZIONE coordinata: il primo battito è
+  /// arrivato (startedAt fissato all'istante di inizio pacing = mStartMs del
+  /// watch + prep), ma quell'istante è ancora nel futuro. Sia orologio che
+  /// telefono restano "silenziosi" (nessun respiro guida, nessuna vibrazione)
+  /// finché la prep non finisce, così partono a regime nello stesso istante.
+  final bool preparing;
+
   const TrainingState({
     required this.running,
     required this.startedAt,
@@ -37,6 +61,9 @@ class TrainingState {
     required this.liveMetrics,
     required this.targetDurationSec,
     this.lastSessionId,
+    this.abortedNoData = false,
+    this.connectionLost = false,
+    this.preparing = false,
   });
 
   TrainingState copyWith({
@@ -49,22 +76,35 @@ class TrainingState {
     HrvMetrics? liveMetrics,
     int? targetDurationSec,
     int? lastSessionId,
-  }) =>
-      TrainingState(
-        running: running ?? this.running,
-        startedAt: startedAt ?? this.startedAt,
-        pattern: pattern ?? this.pattern,
-        tag: tag ?? this.tag,
-        samples: samples ?? this.samples,
-        hrTrace: hrTrace ?? this.hrTrace,
-        liveMetrics: liveMetrics ?? this.liveMetrics,
-        targetDurationSec: targetDurationSec ?? this.targetDurationSec,
-        lastSessionId: lastSessionId ?? this.lastSessionId,
-      );
+    bool? abortedNoData,
+    bool? connectionLost,
+    bool? preparing,
+  }) => TrainingState(
+    running: running ?? this.running,
+    startedAt: startedAt ?? this.startedAt,
+    pattern: pattern ?? this.pattern,
+    tag: tag ?? this.tag,
+    samples: samples ?? this.samples,
+    hrTrace: hrTrace ?? this.hrTrace,
+    liveMetrics: liveMetrics ?? this.liveMetrics,
+    targetDurationSec: targetDurationSec ?? this.targetDurationSec,
+    lastSessionId: lastSessionId ?? this.lastSessionId,
+    abortedNoData: abortedNoData ?? this.abortedNoData,
+    connectionLost: connectionLost ?? this.connectionLost,
+    preparing: preparing ?? this.preparing,
+  );
 
-  Duration get elapsed => startedAt == null
-      ? Duration.zero
-      : DateTime.now().difference(startedAt!);
+  /// Secondi rimanenti di preparazione (0 se non in prep). Time-dependent: i
+  /// widget che lo leggono rebuildano via timer.
+  int get prepSecLeft {
+    final s = startedAt;
+    if (s == null || !preparing) return 0;
+    final ms = s.difference(DateTime.now()).inMilliseconds;
+    return ms <= 0 ? 0 : (ms / 1000).ceil();
+  }
+
+  Duration get elapsed =>
+      startedAt == null ? Duration.zero : DateTime.now().difference(startedAt!);
 }
 
 class TrainingController extends StateNotifier<TrainingState> {
@@ -72,13 +112,38 @@ class TrainingController extends StateNotifier<TrainingState> {
   StreamSubscription<HeartRateEvent>? _sub;
   Timer? _metricsTimer;
   Timer? _autoStopTimer;
-  // Fallback: parte se il watch non manda HR entro N secondi dopo l'avvio,
-  // così che l'utente non resti bloccato in "avvio…" all'infinito.
-  Timer? _alignmentFallback;
-  static const _watchAlignmentTimeoutSec = 60;
+  // Guardia "nessun dato": se il watch non manda alcun battito entro
+  // [kWatchFirstSampleTimeout] dall'avvio, ANNULLIAMO la sessione con un errore
+  // invece di farla partire comunque a vuoto (vecchio comportamento: dopo il
+  // timeout fissava startedAt e registrava una sessione fantasma senza HR).
+  Timer? _firstSampleTimeout;
+  // Watchdog del flusso battiti DURANTE la cattura: se i battiti si fermano
+  // oltre [kWatchStaleDataTimeout] alza il flag connectionLost (banner), senza
+  // annullare la misura. Resettato ad ogni battito.
+  Timer? _staleDataTimer;
+  // Timer di fine PREPARAZIONE: scatta quando l'istante di inizio pacing è
+  // raggiunto, abbassando `preparing` così UI e orb passano a regime allineati
+  // al watch (che parte a ritmo nello stesso istante).
+  Timer? _prepTimer;
+
+  /// Durata della fase di preparazione coordinata (s). L'orologio resta
+  /// silenzioso e il telefono mostra "Preparati" per questo tempo dopo aver
+  /// fissato l'inizio sessione, poi entrambi partono a regime insieme. Inviata
+  /// al watch come `prepMs` in START_SESSION.
+  static const kTrainingPrepSec = 10;
+
+  /// Compensazione vibrazione (ms): l'orb viene tenuto INDIETRO di questo
+  /// scarto rispetto al clock-sessione del watch, perché la vibrazione del
+  /// watch viene avvertita ~100-130 ms dopo il bordo di fase reale (il watch
+  /// rileva il cambio fase solo sul suo tick da 200 ms + spin-up aptico).
+  /// Senza, l'orb (sul clock esatto) cambia PRIMA della vibrazione e sembra in
+  /// anticipo. L'utente segue la vibrazione, quindi allineiamo l'orb a quella.
+  /// Tunabile in base alla percezione.
+  static const kOrbVibCompMs = 120;
 
   TrainingController(this.ref)
-      : super(TrainingState(
+    : super(
+        TrainingState(
           running: false,
           startedAt: null,
           pattern: BreathingPattern.resonance6bpm,
@@ -87,7 +152,8 @@ class TrainingController extends StateNotifier<TrainingState> {
           hrTrace: const [],
           liveMetrics: HrvMetrics.empty,
           targetDurationSec: 20 * 60,
-        ));
+        ),
+      );
 
   Future<void> start(
     BreathingPattern pattern, {
@@ -100,11 +166,18 @@ class TrainingController extends StateNotifier<TrainingState> {
     _sub?.cancel();
     _metricsTimer?.cancel();
     _autoStopTimer?.cancel();
-    _alignmentFallback?.cancel();
+    _firstSampleTimeout?.cancel();
+    _staleDataTimer?.cancel();
+    _prepTimer?.cancel();
     final src = ref.read(heartRateSourceProvider);
+    // prepMs: l'orologio resta silenzioso (niente vibrazione/respiro) per
+    // questo tempo dopo START, poi parte a regime; il telefono fa lo stesso.
+    // Allinea l'avvio del respiro guida sui due dispositivi ed evita l'orb
+    // congelato nei secondi di warm-up/connessione.
     await src.start(
       pattern: pattern,
       targetDurationSec: targetDurationSec,
+      prepMs: kTrainingPrepSec * 1000,
     );
     ref.read(currentPatternProvider.notifier).state = pattern;
     // Stato fresh costruito a mano (non copyWith) perché il pattern
@@ -128,39 +201,81 @@ class TrainingController extends StateNotifier<TrainingState> {
     _metricsTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       _recomputeMetrics();
     });
-    // Fallback hard-cap: se per qualsiasi motivo il watch non manda HR
-    // (sensore giù, BT instabile), fai partire comunque il timer dopo
-    // _watchAlignmentTimeoutSec così la sessione non resta in "avvio…"
-    // a vita. Il primo HR sample sostituisce questo fallback.
-    _alignmentFallback = Timer(
-      const Duration(seconds: _watchAlignmentTimeoutSec),
-      () {
-        if (state.running && state.startedAt == null) {
-          _kickoffSession(DateTime.now());
-        }
-      },
-    );
+    // Guardia "nessun dato": se entro il timeout non è arrivato ALCUN battito,
+    // annulla la sessione con errore invece di farla partire a vuoto. Il primo
+    // HR sample disarma questa guardia (vedi _kickoffSession). Una misura senza
+    // HR non ha alcun valore: meglio dirlo all'utente che registrare 20 min di
+    // nulla.
+    _firstSampleTimeout = Timer(kWatchFirstSampleTimeout, () {
+      if (state.running && state.startedAt == null) {
+        _abortNoData();
+      }
+    });
   }
 
-  /// Avvia il countdown reale: fissa startedAt e crea l'auto-stop timer.
-  /// Idempotente — chiamato dal primo HR sample (caso normale) o dal
-  /// fallback timeout.
+  /// Annulla la sessione perché l'orologio non ha inviato dati: ferma la
+  /// sorgente e porta lo stato a `running:false` con `abortedNoData:true`, senza
+  /// salvare nulla. La UI mostra l'errore e torna al setup.
+  Future<void> _abortNoData() async {
+    _sub?.cancel();
+    _metricsTimer?.cancel();
+    _autoStopTimer?.cancel();
+    _firstSampleTimeout?.cancel();
+    _staleDataTimer?.cancel();
+    _prepTimer?.cancel();
+    try {
+      await ref.read(heartRateSourceProvider).stop();
+    } catch (_) {}
+    state = state.copyWith(running: false, abortedNoData: true);
+  }
+
+  /// (Ri)arma il watchdog del flusso battiti durante la cattura. Se non arriva
+  /// un nuovo battito entro [kWatchStaleDataTimeout], alza connectionLost.
+  void _armStaleDataWatchdog() {
+    _staleDataTimer?.cancel();
+    _staleDataTimer = Timer(kWatchStaleDataTimeout, () {
+      if (state.running && state.startedAt != null && !state.connectionLost) {
+        state = state.copyWith(connectionLost: true);
+      }
+    });
+  }
+
+  /// Fissa l'inizio sessione e arma auto-stop + fine-prep.
+  /// Idempotente — chiamato dal primo HR sample.
   ///
-  /// Il timer viene calcolato sul TEMPO RESIDUO da `startedAt`, non sulla
-  /// durata totale: se `startedAt` è retro-datato (caso primo HR sample con
-  /// watchElapsedMs > 0), partire con `targetDurationSec` interi farebbe
-  /// finire il phone dopo il watch dello stesso delta.
-  void _kickoffSession(DateTime startedAt) {
+  /// [pacingStart] è l'istante in cui il respiro guida deve PARTIRE su entrambi
+  /// i dispositivi (= mStartMs del watch + prep). È nel futuro durante la prep:
+  /// in quel caso `preparing` resta true finché `_prepTimer` non scatta. Se la
+  /// connessione è stata così lenta che pacingStart è già passato, si parte
+  /// subito a regime (preparing false).
+  ///
+  /// L'auto-stop è sul TEMPO RESIDUO da pacingStart: durante la prep elapsedMs
+  /// è negativo, quindi remainingMs include la prep e il phone si ferma allo
+  /// stesso istante del watch (mStartMs + prep + durata).
+  void _kickoffSession(DateTime pacingStart) {
     if (state.startedAt != null) return;
-    state = state.copyWith(startedAt: startedAt);
-    _alignmentFallback?.cancel();
-    _alignmentFallback = null;
-    final elapsedMs = DateTime.now().difference(startedAt).inMilliseconds;
-    final remainingMs =
-        (state.targetDurationSec * 1000 - elapsedMs).clamp(0, 1 << 31);
+    final now = DateTime.now();
+    final preparing = pacingStart.isAfter(now);
+    state = state.copyWith(startedAt: pacingStart, preparing: preparing);
+    _firstSampleTimeout?.cancel();
+    _firstSampleTimeout = null;
+    _armStaleDataWatchdog();
+    final elapsedMs = now.difference(pacingStart).inMilliseconds;
+    final remainingMs = (state.targetDurationSec * 1000 - elapsedMs).clamp(
+      0,
+      1 << 31,
+    );
     _autoStopTimer = Timer(Duration(milliseconds: remainingMs), () {
       if (state.running) stop(save: true);
     });
+    if (preparing) {
+      _prepTimer?.cancel();
+      _prepTimer = Timer(pacingStart.difference(now), () {
+        if (state.running && state.preparing) {
+          state = state.copyWith(preparing: false);
+        }
+      });
+    }
   }
 
   void _onBeat(HeartRateEvent e) {
@@ -176,34 +291,77 @@ class TrainingController extends StateNotifier<TrainingState> {
     // produce il primo battito. Senza questa correzione il countdown del
     // phone risultava sempre 3-5 s indietro rispetto al watch.
     if (state.running && state.startedAt == null) {
-      // Guardia anti-sample-stale: un HR_SAMPLE il cui watchElapsedMs supera la
-      // durata target non può appartenere a QUESTA sessione appena avviata — è
-      // un residuo del loop sensori del watch non resettato (vedi reset su
-      // re-START lato Monkey C). Anchorare il countdown su di esso lo porterebbe
-      // a ~0, chiudendo subito la sessione. In quel caso ripartiamo da adesso.
-      final raw = e.watchElapsedMs;
+      // Primo battito: fissa l'istante di INIZIO PACING.
+      final pacer = e.watchPacerMs;
       final maxMs = state.targetDurationSec * 1000;
-      final elapsedMs = (raw != null && raw >= 0 && raw <= maxMs) ? raw : null;
-      final t0 = elapsedMs != null
-          ? DateTime.now().subtract(Duration(milliseconds: elapsedMs))
-          : DateTime.now();
-      _kickoffSession(t0);
+      if (pacer != null) {
+        // Watch con prep coordinata: pacer = tempo di sessione (negativo
+        // durante la prep). pacingStart = adesso - pacer (nel futuro durante la
+        // prep → preparing). Guardia anti-stale: deve stare in
+        // [-(prep) .. durata]; fuori range (residuo loop sensori) → parti ora.
+        final p = (pacer >= -(kTrainingPrepSec * 1000) - 1000 && pacer <= maxMs)
+            ? pacer
+            : 0;
+        _kickoffSession(DateTime.now().subtract(Duration(milliseconds: p)));
+      } else {
+        // Firmware vecchio senza prep: nessuna preparazione, allinea a mStartMs
+        // del watch via watchElapsedMs come nel comportamento precedente.
+        final raw = e.watchElapsedMs;
+        final elapsedMs = (raw != null && raw >= 0 && raw <= maxMs) ? raw : null;
+        final t0 = elapsedMs != null
+            ? DateTime.now().subtract(Duration(milliseconds: elapsedMs))
+            : DateTime.now();
+        _kickoffSession(t0);
+      }
+    } else if (state.running && !state.preparing) {
+      // Re-sync continuo (closed-loop) dell'orb sul TEMPO DI SESSIONE del watch
+      // (master del ritmo). Senza, l'errore dell'aggancio iniziale + il drift
+      // fra i due oscillatori restavano congelati e l'orb finiva qualche
+      // secondo dietro la vibrazione. Nudga solo l'offset dell'orb, MAI
+      // auto-stop/countdown. Solo a regime. Con watch vecchio (no pacerMs)
+      // ricade su watchElapsedMs (nessuna prep).
+      // Bersaglio dell'orb = clock-sessione del watch MENO la compensazione
+      // vibrazione, così l'orb cade sulla vibrazione avvertita (non sul bordo
+      // teorico). Vedi kOrbVibCompMs.
+      final maxMs = state.targetDurationSec * 1000;
+      final pacer = e.watchPacerMs;
+      if (pacer != null) {
+        final target = pacer - kOrbVibCompMs;
+        if (target >= 0 && pacer <= maxMs) {
+          ref.read(pacerControllerProvider.notifier).resync(target);
+        }
+      } else {
+        final raw = e.watchElapsedMs;
+        if (raw != null && raw >= 0 && raw <= maxMs) {
+          final target = raw - kOrbVibCompMs;
+          if (target >= 0) {
+            ref.read(pacerControllerProvider.notifier).resync(target);
+          }
+        }
+      }
     }
-    // Mantieni TUTTI i campioni della sessione: il filtro a 5 min era
-    // pensato per il calcolo reattivo ma cancellava 15 min di dati su
-    // sessioni di 20 min, falsando metriche finali e salvataggio in DB.
-    // La finestra rolling vive ora solo dentro _recomputeMetrics.
-    final samples = [...state.samples, e.toRr()];
-    final hrTrace = [
-      ...state.hrTrace,
-      HrTracePoint(timestamp: e.timestamp, bpm: e.bpm),
-    ];
-    state = state.copyWith(
-      samples: samples,
-      hrTrace: hrTrace.length > 600
-          ? hrTrace.sublist(hrTrace.length - 600)
-          : hrTrace,
-    );
+    // Battito ricevuto: il flusso è vivo. Rilancia il watchdog.
+    _armStaleDataWatchdog();
+    // Raccogli RR/HR SOLO a regime: i battiti durante la prep sono warm-up a
+    // respiro NON guidato (orologio silenzioso) e contaminerebbero
+    // metriche/grafico. Mantieni TUTTI i campioni della sessione (la finestra
+    // rolling vive solo dentro _recomputeMetrics).
+    if (state.startedAt != null && !state.preparing) {
+      final samples = [...state.samples, e.toRr()];
+      final hrTrace = [
+        ...state.hrTrace,
+        HrTracePoint(timestamp: e.timestamp, bpm: e.bpm),
+      ];
+      state = state.copyWith(
+        samples: samples,
+        hrTrace: hrTrace.length > 600
+            ? hrTrace.sublist(hrTrace.length - 600)
+            : hrTrace,
+        connectionLost: false,
+      );
+    } else if (state.connectionLost) {
+      state = state.copyWith(connectionLost: false);
+    }
   }
 
   void _recomputeMetrics() {
@@ -212,8 +370,9 @@ class TrainingController extends StateNotifier<TrainingState> {
     // (Lomb-Scargle su 1200 sample sarebbe pesante ogni 5s). Le metriche
     // finali al stop usano comunque tutto il buffer.
     final fromT = DateTime.now().subtract(const Duration(minutes: 5));
-    final window =
-        state.samples.where((r) => r.timestamp.isAfter(fromT)).toList();
+    final window = state.samples
+        .where((r) => r.timestamp.isAfter(fromT))
+        .toList();
     if (window.length < 20) return;
     state = state.copyWith(liveMetrics: HrvCalculator.compute(window));
   }
@@ -222,7 +381,9 @@ class TrainingController extends StateNotifier<TrainingState> {
     _sub?.cancel();
     _metricsTimer?.cancel();
     _autoStopTimer?.cancel();
-    _alignmentFallback?.cancel();
+    _firstSampleTimeout?.cancel();
+    _staleDataTimer?.cancel();
+    _prepTimer?.cancel();
     final src = ref.read(heartRateSourceProvider);
     await src.stop();
     final ended = DateTime.now();
@@ -277,11 +438,14 @@ class TrainingController extends StateNotifier<TrainingState> {
     _sub?.cancel();
     _metricsTimer?.cancel();
     _autoStopTimer?.cancel();
-    _alignmentFallback?.cancel();
+    _firstSampleTimeout?.cancel();
+    _staleDataTimer?.cancel();
+    _prepTimer?.cancel();
     super.dispose();
   }
 }
 
 final trainingControllerProvider =
     StateNotifierProvider.autoDispose<TrainingController, TrainingState>(
-        (ref) => TrainingController(ref));
+      (ref) => TrainingController(ref),
+    );
