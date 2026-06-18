@@ -1,0 +1,2 @@
+# Cartella dichiarata in pubspec.yaml (flutter > assets). Tenuta tracciata con
+# questo placeholder così la build non fallisce quando è ancora senza file audio.
