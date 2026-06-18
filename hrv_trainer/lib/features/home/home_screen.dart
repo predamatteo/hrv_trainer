@@ -69,7 +69,7 @@ class HomeScreen extends ConsumerWidget {
           _BigActionCard(
             icon: Icons.self_improvement,
             title: 'Sessione di Training',
-            subtitle: '20 minuti alla tua frequenza di risonanza',
+            subtitle: 'Sessione guidata — scegli contesto, ritmo e durata',
             onTap: () => context.push('/training'),
             highlighted: true,
           ),

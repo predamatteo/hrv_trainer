@@ -8,8 +8,9 @@ import '../../readiness/state/readiness_providers.dart';
 
 /// Card "Stato generale HRV" in home: la vista CRONICA dell'HRV (livello tipico
 /// + direzione su più settimane + stabilità), complementare alla Morning
-/// Readiness che è acuta (oggi vs baseline). Riepilogo glanceable; il trend
-/// completo vive nello Storico → tap sull'intera card.
+/// Readiness che è acuta (oggi vs baseline). Riepilogo glanceable; il cruscotto
+/// completo (coerenza nel training, HRV per contesto, impatto abitudini, trend
+/// aggregati) vive in "Andamento HRV" → tap sull'intera card.
 class HrvGeneralCard extends ConsumerWidget {
   const HrvGeneralCard({super.key});
 
@@ -22,7 +23,7 @@ class HrvGeneralCard extends ConsumerWidget {
     return Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: () => context.push('/history'),
+        onTap: () => context.push('/hrv'),
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(

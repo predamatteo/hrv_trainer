@@ -1,7 +1,7 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 
-import '../../../shared/hrv/session_models.dart';
+import '../session_models.dart';
 
 /// Istogramma della distribuzione di HRV score (0-100) sulle sessioni
 /// in [sessions]. Buckets da 10 punti per visualizzare la propria
