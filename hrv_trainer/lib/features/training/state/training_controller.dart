@@ -125,6 +125,16 @@ class TrainingController extends StateNotifier<TrainingState> {
   // raggiunto, abbassando `preparing` così UI e orb passano a regime allineati
   // al watch (che parte a ritmo nello stesso istante).
   Timer? _prepTimer;
+  // Guardia di rientranza per stop(): da quando l'auto-stop a fine durata
+  // chiama stop(save:true), c'è una breve finestra `await repo.saveSession`
+  // in cui `running` è ancora true. Senza questa guardia un tap "Termina senza
+  // salvare" proprio in quell'istante (stop(save:false)) potrebbe eseguire il
+  // ramo di scarto e mostrare "non salvata perché incompleta" mentre il
+  // salvataggio dell'auto-stop sta comunque committando la riga. Settata in
+  // testa a stop() prima di qualunque await; il primo stop "vince", i
+  // successivi sono no-op. Resettata in start() per sicurezza in caso di
+  // riuso dell'istanza (di norma il controller è autoDispose e si ricrea).
+  bool _stopping = false;
 
   /// Durata della fase di preparazione coordinata (s). L'orologio resta
   /// silenzioso e il telefono mostra "Preparati" per questo tempo dopo aver
@@ -169,6 +179,7 @@ class TrainingController extends StateNotifier<TrainingState> {
     _firstSampleTimeout?.cancel();
     _staleDataTimer?.cancel();
     _prepTimer?.cancel();
+    _stopping = false;
     final src = ref.read(heartRateSourceProvider);
     // prepMs: l'orologio resta silenzioso (niente vibrazione/respiro) per
     // questo tempo dopo START, poi parte a regime; il telefono fa lo stesso.
@@ -378,19 +389,35 @@ class TrainingController extends StateNotifier<TrainingState> {
   }
 
   Future<Session?> stop({bool save = true}) async {
+    // Guardia di rientranza: il primo stop vince. Evita che un secondo stop
+    // concorrente (es. tap "Termina senza salvare" proprio mentre l'auto-stop
+    // a fine durata è dentro `await repo.saveSession`) esegua il ramo di scarto
+    // e contraddica un salvataggio già in corso. Vedi `_stopping`.
+    if (_stopping) return null;
+    _stopping = true;
     _sub?.cancel();
     _metricsTimer?.cancel();
     _autoStopTimer?.cancel();
     _firstSampleTimeout?.cancel();
     _staleDataTimer?.cancel();
     _prepTimer?.cancel();
+    // Ferma il watch in BACKGROUND, senza bloccare la transizione della UI.
+    // L'handshake di stop lato GarminCiqSource (attesa ACK ~3s + eventuale
+    // forceStop ~5s) poteva tenere `await src.stop()` appeso fino a ~8s: in
+    // quell'intervallo `running` restava true e l'utente vedeva la sessione
+    // "continuare ad andare" (orb che pulsa + countdown che scorre) per una
+    // decina di secondi dopo aver premuto stop. Spostandolo fuori dall'await,
+    // lo stato passa subito a running:false e l'orologio viene fermato dietro
+    // le quinte (il fallback forceStop continua a funzionare lì).
     final src = ref.read(heartRateSourceProvider);
-    await src.stop();
+    unawaited(src.stop());
     final ended = DateTime.now();
     final metrics = HrvCalculator.compute(state.samples);
     if (!save || state.startedAt == null) {
-      // Niente da salvare: transizione semplice a running:false. lastSessionId
-      // resta null e la UI ricade sul fallback (pop a home).
+      // Niente da salvare: sessione annullata in connessione/preparazione,
+      // OPPURE interrotta manualmente prima del termine (incompleta → per
+      // scelta non la salviamo, vedi pulsante stop). lastSessionId resta null
+      // e la UI ricade sul fallback (pop a home, niente "completata").
       state = state.copyWith(running: false, liveMetrics: metrics);
       return null;
     }

@@ -119,10 +119,24 @@ class _TrainingScreenState extends ConsumerState<TrainingScreen>
           return;
         }
 
-        // Nessuna sessione salvata (annullata in connessione/preparazione, o
-        // stop senza save): esci in silenzio, niente messaggio "completata".
+        // Nessuna sessione salvata. Due casi:
+        //  - misura interrotta MANUALMENTE prima del termine (a regime, quindi
+        //    startedAt fissato e prep finita): per scelta non salviamo le
+        //    sessioni incomplete → avvisiamo che non è stata registrata.
+        //  - annullata in connessione/preparazione (startedAt nullo o ancora in
+        //    prep): nulla di misurato, esci in silenzio.
         final id = next.lastSessionId;
         if (id == null) {
+          if (next.startedAt != null && !next.preparing) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Sessione interrotta: non salvata perché incompleta',
+                ),
+                duration: Duration(seconds: 3),
+              ),
+            );
+          }
           if (context.canPop()) context.pop();
           return;
         }
@@ -176,7 +190,8 @@ class _TrainingScreenState extends ConsumerState<TrainingScreen>
         if (didPop) return;
         final confirm = await _confirmStop();
         if (confirm == true && context.mounted) {
-          await ref.read(trainingControllerProvider.notifier).stop(save: true);
+          // Stop manuale = sessione incompleta → non salvata (save:false).
+          await ref.read(trainingControllerProvider.notifier).stop(save: false);
         }
       },
       child: Scaffold(
@@ -188,9 +203,10 @@ class _TrainingScreenState extends ConsumerState<TrainingScreen>
               onPressed: () async {
                 final confirm = await _confirmStop();
                 if (confirm == true && context.mounted) {
+                  // Stop manuale = sessione incompleta → non salvata (save:false).
                   await ref
                       .read(trainingControllerProvider.notifier)
-                      .stop(save: true);
+                      .stop(save: false);
                 }
               },
             ),
@@ -433,15 +449,22 @@ class _TrainingScreenState extends ConsumerState<TrainingScreen>
     context: context,
     builder: (ctx) => AlertDialog(
       title: const Text('Terminare la sessione?'),
-      content: const Text('I dati raccolti verranno salvati nello storico.'),
+      content: const Text(
+        'La sessione non è ancora completa: terminandola ora NON verrà '
+        'salvata nello storico. Lasciala finire per registrarla.',
+      ),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(ctx).pop(false),
           child: const Text('Continua'),
         ),
-        FilledButton(
+        FilledButton.tonal(
+          style: FilledButton.styleFrom(
+            foregroundColor: Theme.of(ctx).colorScheme.onErrorContainer,
+            backgroundColor: Theme.of(ctx).colorScheme.errorContainer,
+          ),
           onPressed: () => Navigator.of(ctx).pop(true),
-          child: const Text('Termina'),
+          child: const Text('Termina senza salvare'),
         ),
       ],
     ),

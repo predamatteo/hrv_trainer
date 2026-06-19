@@ -339,9 +339,12 @@ class MorningCheckInController extends StateNotifier<MorningCheckInState> {
     _sub?.cancel();
     _sub = null;
     final src = ref.read(heartRateSourceProvider);
-    await src.stop();
     final metrics = HrvCalculator.compute(_window);
+    // Passa SUBITO al riepilogo; il watch viene fermato in background.
+    // L'handshake di stop (ACK ~3s + eventuale forceStop ~5s) non deve
+    // ritardare di una decina di secondi la comparsa della review a 00:00.
     state = state.copyWith(phase: CheckInPhase.review, metrics: metrics);
+    unawaited(src.stop());
   }
 
   /// Salva la lettura con il contesto raccolto. Ritorna l'id della sessione
@@ -392,17 +395,19 @@ class MorningCheckInController extends StateNotifier<MorningCheckInState> {
     _staleDataTimer = null;
     _sub?.cancel();
     _sub = null;
-    if (state.phase == CheckInPhase.measuring) {
-      try {
-        await ref.read(heartRateSourceProvider).stop();
-      } catch (_) {}
-    }
+    final wasMeasuring = state.phase == CheckInPhase.measuring;
     _window.clear();
+    // Torna SUBITO a idle (così la schermata si chiude all'istante); il watch
+    // viene fermato in background, senza far attendere l'utente l'handshake di
+    // stop (~8s nel caso peggiore con fallback forceStop).
     state = MorningCheckInState(
       phase: CheckInPhase.idle,
       posture: state.posture,
       protocol: state.protocol,
     );
+    if (wasMeasuring) {
+      unawaited(ref.read(heartRateSourceProvider).stop());
+    }
   }
 
   @override

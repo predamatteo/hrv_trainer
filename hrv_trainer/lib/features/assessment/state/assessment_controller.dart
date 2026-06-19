@@ -209,12 +209,15 @@ class AssessmentController extends StateNotifier<AssessmentState> {
     _staleDataTimer?.cancel();
     _sub?.cancel();
     final src = ref.read(heartRateSourceProvider);
-    await src.stop();
     final result = ResonanceAssessment.analyze(
       DateTime.now(),
       state.completedSteps,
     );
+    // Mostra SUBITO l'esito; il watch viene fermato in background (l'handshake
+    // di stop, fino a ~8s con fallback forceStop, non deve ritardare la
+    // schermata dei risultati). Il salvataggio su DB prosegue dopo il rebuild.
     state = state.copyWith(phase: AssessmentPhase.completed, result: result);
+    unawaited(src.stop());
     await ref.read(sessionRepositoryProvider).saveAssessment(result);
   }
 
@@ -226,7 +229,8 @@ class AssessmentController extends StateNotifier<AssessmentState> {
     _staleDataTimer = null;
     _sub?.cancel();
     final src = ref.read(heartRateSourceProvider);
-    await src.stop();
+    // Torna SUBITO a idle; il watch viene fermato in background, senza far
+    // attendere all'utente l'handshake di stop (~8s con fallback forceStop).
     state = const AssessmentState(
       phase: AssessmentPhase.idle,
       currentStepIndex: -1,
@@ -234,6 +238,7 @@ class AssessmentController extends StateNotifier<AssessmentState> {
       completedSteps: [],
       currentWindow: [],
     );
+    unawaited(src.stop());
   }
 
   void _onBeat(HeartRateEvent e) {

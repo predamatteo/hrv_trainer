@@ -36,6 +36,17 @@ class GarminCiqSource implements HeartRateSource {
   // davvero consegnato e, in caso contrario, ricadere su forceStop.
   Completer<bool>? _pendingStopAck;
 
+  // Contatore di generazione delle operazioni di sessione. La sorgente è un
+  // singleton app-scoped condiviso fra le sessioni: da quando lo stop gira in
+  // background (UI già transita), un suo fallback forceStop (openApplication +
+  // STOP_SESSION) può partire ~3s dopo. Se nel frattempo è iniziata una NUOVA
+  // sessione, quel STOP fermerebbe il sensore della sessione nuova sul watch.
+  // start() e stop() bumpano `_opGen`; lo stop cattura la propria generazione e
+  // PRIMA del fallback forceStop verifica di essere ancora l'operazione
+  // corrente: se è stato superato, lo salta (il nuovo START_SESSION resetta
+  // comunque la sessione precedente lato watch — vedi HrvTrainerApp.mc).
+  int _opGen = 0;
+
   StreamSubscription? _eventSub;
   HrSourceState _state = HrSourceState.disconnected;
 
@@ -171,6 +182,9 @@ class GarminCiqSource implements HeartRateSource {
     int? targetDurationSec,
     int? prepMs,
   }) async {
+    // Nuova sessione: invalida eventuali stop/forceStop in volo della
+    // precedente, così un loro fallback tardivo non manda STOP_SESSION qui.
+    _opGen++;
     _setState(HrSourceState.connecting);
     final args = <String, Object?>{'hz': 4};
     if (pattern != null) {
@@ -199,6 +213,10 @@ class GarminCiqSource implements HeartRateSource {
 
   @override
   Future<void> stop() async {
+    // Generazione di questa operazione di stop: se viene superata (nuovo
+    // start()/stop()) PRIMA del fallback, lo salteremo per non interferire con
+    // la sessione successiva.
+    final myGen = ++_opGen;
     // 1) Stop "leggero": sendMessage diretto (niente openApplication → niente
     //    dialog "Avviare?"). Va a segno quando l'app sul watch è in foreground.
     //    Armiamo l'ack PRIMA di inviare per non perdere una risposta velocissima.
@@ -214,7 +232,12 @@ class GarminCiqSource implements HeartRateSource {
     //    è perso → "l'orologio continua ad andare". Ricadiamo su forceStop
     //    (openApplication-backed): riporta l'app in foreground e consegna lo STOP.
     final acked = await ack1;
-    if (!acked) {
+    if (!acked && myGen == _opGen) {
+      // Salta il fallback se nel frattempo è iniziata una nuova sessione (o un
+      // nuovo stop): il suo openApplication+STOP_SESSION fermerebbe il sensore
+      // della sessione nuova sul watch. Lo stop leggero è comunque già stato
+      // inviato; se davvero perso, il watch ha il proprio auto-stop di backup e
+      // il nuovo START_SESSION resetta comunque la sessione precedente.
       final ack2 = _armStopAck(const Duration(seconds: 5));
       try {
         await _channel.invokeMethod<void>('forceStop');
