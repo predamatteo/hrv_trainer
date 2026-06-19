@@ -135,14 +135,6 @@ class MorningCheckInController extends StateNotifier<MorningCheckInState> {
   /// scarta i primi battiti instabili (attivazione sensore, transitorio).
   static const settleSec = 10;
 
-  /// Margine di guardia (s) aggiunto alla durata inviata al watch. Il telefono
-  /// è il driver e ferma a fine cattura (vedi _finish → src.stop): questo
-  /// margine fa sì che l'auto-stop locale del watch resti un BACKUP che non
-  /// tronca MAI la finestra del telefono. Senza, l'auto-stop esatto del watch
-  /// scattava prima che lo STOP del telefono arrivasse via BT, spegnendo il
-  /// sensore e facendo perdere gli ultimi battiti (la misura finiva corta).
-  static const _watchBackupGuardSec = 10;
-
   MorningCheckInController(this.ref)
     : super(
         const MorningCheckInState(
@@ -178,11 +170,15 @@ class MorningCheckInController extends StateNotifier<MorningCheckInState> {
 
     final src = ref.read(heartRateSourceProvider);
     final total = settleSec + state.protocol.captureSec;
-    // Niente pattern → misura SPONTANEA (nessun pacer). La durata inviata al
-    // watch include un margine di guardia (vedi _watchBackupGuardSec) così il
-    // suo auto-stop resta un backup che non tronca la cattura: il telefono è
-    // il driver e ferma a fine cattura.
-    await src.start(targetDurationSec: total + _watchBackupGuardSec);
+    // Niente pattern → misura SPONTANEA (nessun pacer). Inviamo la durata REALE
+    // (assestamento + cattura): così il countdown mostrato dall'orologio coincide
+    // con quello del telefono. Il margine di backup che impedisce all'auto-stop
+    // del watch di troncare la finestra NON sta più qui: gonfiarlo lato telefono
+    // faceva apparire il countdown dell'orologio 10s avanti rispetto al telefono.
+    // Ora vive lato orologio, applicato SOLO al suo auto-stop di backup per le
+    // sessioni phone-driven (vedi HrvTrainerView.onTick, AUTOSTOP_BACKUP_GUARD_MS).
+    // Il telefono resta il driver e ferma a fine cattura (_finish → src.stop()).
+    await src.start(targetDurationSec: total);
 
     state = MorningCheckInState(
       phase: CheckInPhase.measuring,

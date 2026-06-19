@@ -25,6 +25,18 @@ class HrvTrainerView extends Ui.View {
     static const SCREEN_ACTIVE = 2;
     hidden var mScreen;
 
+    // Margine di backup (ms) aggiunto all'auto-stop SOLO per le sessioni
+    // phone-driven: il telefono è il driver e invia lo STOP a fine durata,
+    // quindi il nostro auto-stop deve restare un salvagente che NON tronchi la
+    // finestra del telefono (senza margine il sensore si spegneva un attimo
+    // prima che lo STOP arrivasse via BT, perdendo gli ultimi battiti). Il
+    // countdown a schermo usa la durata pura (mDurationSec), così resta
+    // allineato al telefono e tocca 0:00 quando arriva lo STOP — questo margine
+    // sposta solo PIÙ AVANTI il backstop, non il numero mostrato. Sulle sessioni
+    // standalone (avvio dal watch) il margine è 0: lì l'auto-stop è lo stop vero
+    // e con margine la sessione durerebbe più del configurato.
+    static const AUTOSTOP_BACKUP_GUARD_MS = 10000;
+
     // === Stato sessione attiva (SCREEN_ACTIVE) ===
     hidden var mActive;
     hidden var mPacer;
@@ -197,9 +209,19 @@ class HrvTrainerView extends Ui.View {
         // Auto-stop al raggiungimento della durata target, contata sul tempo di
         // sessione: il tempo attivo totale è prep + durata. Delegato all'app
         // così che faccia anche FIT save + invio SESSION_SUMMARY se locale.
-        if (mDurationSec != null && pacerMs >= mDurationSec * 1000) {
-            App.getApp().requestStop();
-            return;
+        // Per le sessioni phone-driven aggiungiamo AUTOSTOP_BACKUP_GUARD_MS: il
+        // telefono ferma a fine durata e questo auto-stop è solo un backup che
+        // non deve troncare la sua finestra. Standalone → guardia 0 (qui
+        // l'auto-stop è lo stop vero). Il countdown a schermo usa mDurationSec
+        // puro, quindi resta allineato al telefono indipendentemente da questo
+        // margine.
+        if (mDurationSec != null) {
+            var guardMs = App.getApp().isPhoneDrivenActive()
+                ? AUTOSTOP_BACKUP_GUARD_MS : 0;
+            if (pacerMs >= mDurationSec * 1000 + guardMs) {
+                App.getApp().requestStop();
+                return;
+            }
         }
 
         // Watchdog "perdita telefono": se l'app phone non può più mandare STOP
