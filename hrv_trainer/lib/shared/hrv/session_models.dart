@@ -19,12 +19,12 @@ enum SessionTag {
 
 extension SessionTagX on SessionTag {
   String get label => switch (this) {
-        SessionTag.morning => 'Morning',
+        SessionTag.morning => 'Mattino',
         SessionTag.preWorkout => 'Pre-workout',
         SessionTag.postWorkout => 'Post-workout',
-        SessionTag.sleep => 'Sleep',
+        SessionTag.sleep => 'Sonno',
         SessionTag.stress => 'Stress',
-        SessionTag.recovery => 'Recovery',
+        SessionTag.recovery => 'Recupero',
         SessionTag.general => 'Generale',
       };
 

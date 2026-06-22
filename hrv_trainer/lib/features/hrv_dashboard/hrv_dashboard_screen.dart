@@ -6,11 +6,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/theme/app_tokens.dart';
 import '../../shared/hrv/dashboard_stats.dart';
 import '../../shared/hrv/hrv_trend.dart';
 import '../../shared/hrv/readiness.dart' show CvStability;
 import '../../shared/hrv/session_models.dart';
+import '../../shared/hrv/widgets/hrv_histogram.dart';
 import '../../shared/hrv/widgets/ln_rmssd_trend_card.dart';
+import '../../shared/hrv/widgets/weekly_lnrmssd_card.dart';
+import '../../shared/ui/ui.dart';
 import '../readiness/state/readiness_providers.dart';
 import 'state/hrv_dashboard_providers.dart';
 
@@ -29,23 +33,33 @@ class HrvDashboardScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
     final sessionsAsync = ref.watch(hrvDashboardSessionsProvider);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Andamento HRV')),
-      body: RefreshIndicator(
-        onRefresh: () async {
-          ref.invalidate(hrvDashboardSessionsProvider);
-          ref.invalidate(morningReadingsProvider);
-          ref.invalidate(hrvGeneralStatusProvider);
-          await ref.read(hrvDashboardSessionsProvider.future);
-        },
-        child: sessionsAsync.when(
-          loading: () => const Center(child: CircularProgressIndicator()),
-          error: (e, _) => _ScrollableMessage(
-            child: Text('Errore nel caricamento: $e'),
+      body: SafeArea(
+        bottom: false,
+        child: RefreshIndicator(
+          onRefresh: () async {
+            ref.invalidate(hrvDashboardSessionsProvider);
+            ref.invalidate(morningReadingsProvider);
+            ref.invalidate(hrvGeneralStatusProvider);
+            await ref.read(hrvDashboardSessionsProvider.future);
+          },
+          child: sessionsAsync.when(
+            loading: () => const _ScrollableMessage(
+              child: CircularProgressIndicator(),
+            ),
+            error: (e, _) => _ScrollableMessage(
+              child: Text(
+                'Errore nel caricamento: $e',
+                textAlign: TextAlign.center,
+                style: text.bodyMedium?.copyWith(color: t.dim),
+              ),
+            ),
+            data: (sessions) => _Body(sessions: sessions),
           ),
-          data: (sessions) => _Body(sessions: sessions),
         ),
       ),
     );
@@ -58,30 +72,77 @@ class _Body extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+
     if (sessions.isEmpty) {
       return const _ScrollableMessage(child: _EmptyState());
     }
 
-    // Grafico generale: ordine cronologico (vecchie → recenti); il provider
+    // Grafici cronici: ordine cronologico (vecchie → recenti); il provider
     // restituisce newest-first.
     final chrono = sessions.reversed.toList();
 
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
       children: [
+        Row(
+          children: [
+            const _BackButton(),
+            const SizedBox(width: 4),
+            Expanded(child: Text('Andamento HRV', style: text.headlineSmall)),
+          ],
+        ),
+        const SizedBox(height: 18),
         const _GeneralStatusCard(),
-        const SizedBox(height: 12),
-        // Grafico generale sotto il quadro cronico: andamento lnRMSSD di tutte
-        // le sessioni della finestra, pallini colorati per contesto.
+        const SizedBox(height: 20),
+
+        // Trend cronico in lnRMSSD: spostato qui dallo Storico, che non mostra
+        // più analisi cross-sessione. Serve un minimo di 3 punti per leggerlo.
         if (chrono.length >= 3) ...[
+          const SectionHeader(title: 'Trend lnRMSSD'),
           LnRmssdTrendCard(sessions: chrono),
-          const SizedBox(height: 12),
+          const SizedBox(height: 20),
+          // Media settimanale: smussa il rumore giornaliero (si auto-nasconde
+          // con meno di 2 settimane).
+          WeeklyLnRmssdCard(sessions: chrono),
+          const SizedBox(height: 20),
         ],
+
+        // Distribuzione dell'HRV score: anch'essa migrata dallo Storico.
+        const SectionHeader(title: 'Distribuzione'),
+        HrvHistogram(sessions: chrono),
+        const SizedBox(height: 20),
+
+        const SectionHeader(title: 'Biofeedback'),
         _CoherenceTrendCard(sessions: sessions),
         const SizedBox(height: 12),
         _HabitImpactCard(sessions: sessions),
       ],
+    );
+  }
+}
+
+/// Pulsante "indietro" tondo coerente col design system (la schermata è
+/// raggiunta via push dalla home).
+class _BackButton extends StatelessWidget {
+  const _BackButton();
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Material(
+      color: t.tonal,
+      shape: const CircleBorder(),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => context.pop(),
+        child: SizedBox(
+          width: 40,
+          height: 40,
+          child: Icon(Icons.arrow_back, size: 20, color: t.dim),
+        ),
+      ),
     );
   }
 }
@@ -95,38 +156,34 @@ class _GeneralStatusCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
     final async = ref.watch(hrvGeneralStatusProvider);
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Quadro cronico', style: theme.textTheme.titleMedium),
-            const SizedBox(height: 10),
-            async.when(
-              loading: () => const SizedBox(
-                height: 40,
-                child: Center(
-                  child: SizedBox(
-                    width: 22,
-                    height: 22,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Quadro cronico', style: text.titleMedium),
+          const SizedBox(height: 10),
+          async.when(
+            loading: () => const SizedBox(
+              height: 40,
+              child: Center(
+                child: SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(strokeWidth: 2),
                 ),
               ),
-              error: (_, _) => Text(
-                'Stato HRV non disponibile.',
-                style: theme.textTheme.bodyMedium
-                    ?.copyWith(color: scheme.onSurfaceVariant),
-              ),
-              data: (s) => _GeneralStatusBody(status: s),
             ),
-          ],
-        ),
+            error: (_, _) => Text(
+              'Stato HRV non disponibile.',
+              style: text.bodyMedium?.copyWith(color: t.dim),
+            ),
+            data: (s) => _GeneralStatusBody(status: s),
+          ),
+        ],
       ),
     );
   }
@@ -138,18 +195,17 @@ class _GeneralStatusBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
 
     if (!status.hasLevel) {
       return Text(
         'L\'andamento comparirà dopo qualche lettura morning.',
-        style:
-            theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+        style: text.bodyMedium?.copyWith(color: t.dim),
       );
     }
 
-    final (dirIcon, dirColor, dirLabel) = _direction(theme, status.direction);
+    final (dirIcon, dirColor, dirLabel) = _direction(t, status.direction);
     final pct = status.deltaPct;
     final pctStr =
         pct == null ? '' : '${pct >= 0 ? '+' : ''}${pct.toStringAsFixed(0)}%';
@@ -160,15 +216,14 @@ class _GeneralStatusBody extends StatelessWidget {
       children: [
         Row(
           children: [
-            Icon(Icons.favorite_outline, size: 18, color: scheme.primary),
+            Icon(Icons.favorite_outline, size: 18, color: t.primary),
             const SizedBox(width: 8),
-            Text('HRV tipico', style: theme.textTheme.bodyMedium),
+            Text('HRV tipico', style: text.bodyMedium),
             const SizedBox(width: 8),
             Text(
               'RMSSD ${status.levelRmssd!.toStringAsFixed(0)} · '
               'score ${status.levelScore!.toStringAsFixed(0)}',
-              style: theme.textTheme.bodyMedium
-                  ?.copyWith(fontWeight: FontWeight.w600),
+              style: text.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
             ),
           ],
         ),
@@ -176,13 +231,12 @@ class _GeneralStatusBody extends StatelessWidget {
         if (status.direction == HrvTrendDirection.unknown)
           Row(
             children: [
-              Icon(Icons.timeline, size: 18, color: scheme.onSurfaceVariant),
+              Icon(Icons.timeline, size: 18, color: t.dim),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   'Andamento disponibile dopo più letture morning.',
-                  style: theme.textTheme.bodySmall
-                      ?.copyWith(color: scheme.onSurfaceVariant),
+                  style: text.bodySmall?.copyWith(color: t.dim),
                 ),
               ),
             ],
@@ -194,14 +248,13 @@ class _GeneralStatusBody extends StatelessWidget {
               const SizedBox(width: 8),
               Text(
                 dirLabel,
-                style: theme.textTheme.bodyMedium
+                style: text.bodyMedium
                     ?.copyWith(color: dirColor, fontWeight: FontWeight.w600),
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text('$pctStr$span',
-                    style: theme.textTheme.bodySmall
-                        ?.copyWith(color: scheme.onSurfaceVariant)),
+                    style: text.bodySmall?.copyWith(color: t.dim)),
               ),
             ],
           ),
@@ -209,13 +262,12 @@ class _GeneralStatusBody extends StatelessWidget {
           const SizedBox(height: 6),
           Row(
             children: [
-              Icon(Icons.show_chart, size: 16, color: _cvColor(theme, status.cvStability)),
+              Icon(Icons.show_chart, size: 16, color: _cvColor(t, status.cvStability)),
               const SizedBox(width: 8),
               Text(
                 'Stabilità: ${_cvLabel(status.cvStability)} '
-                '(CV ${status.cvPct!.toStringAsFixed(1)}%)',
-                style: theme.textTheme.bodySmall
-                    ?.copyWith(color: _cvColor(theme, status.cvStability)),
+                '(CV ${_comma(status.cvPct!, 1)}%)',
+                style: text.bodySmall?.copyWith(color: _cvColor(t, status.cvStability)),
               ),
             ],
           ),
@@ -225,21 +277,21 @@ class _GeneralStatusBody extends StatelessWidget {
   }
 }
 
-(IconData, Color, String) _direction(ThemeData theme, HrvTrendDirection d) {
-  final scheme = theme.colorScheme;
+(IconData, Color, String) _direction(AppTokens t, HrvTrendDirection d) {
   return switch (d) {
-    HrvTrendDirection.improving => (Icons.trending_up, scheme.primary, 'In miglioramento'),
-    HrvTrendDirection.declining => (Icons.trending_down, Colors.orange.shade700, 'In calo'),
-    HrvTrendDirection.stable => (Icons.trending_flat, scheme.onSurfaceVariant, 'Stabile'),
-    HrvTrendDirection.unknown => (Icons.timeline, scheme.onSurfaceVariant, '—'),
+    // In calo = warn (cautela, non allarme).
+    HrvTrendDirection.improving => (Icons.trending_up, t.good, 'In miglioramento'),
+    HrvTrendDirection.declining => (Icons.trending_down, t.warn, 'In calo'),
+    HrvTrendDirection.stable => (Icons.trending_flat, t.dim, 'Stabile'),
+    HrvTrendDirection.unknown => (Icons.timeline, t.dim, '—'),
   };
 }
 
-Color _cvColor(ThemeData theme, CvStability s) => switch (s) {
-      CvStability.stable => theme.colorScheme.onSurfaceVariant,
-      CvStability.moderate => Colors.orange.shade700,
-      CvStability.unstable => theme.colorScheme.error,
-      CvStability.unknown => theme.colorScheme.onSurfaceVariant,
+Color _cvColor(AppTokens t, CvStability s) => switch (s) {
+      CvStability.stable => t.good,
+      CvStability.moderate => t.warn,
+      CvStability.unstable => t.alert,
+      CvStability.unknown => t.dim,
     };
 
 String _cvLabel(CvStability s) => switch (s) {
@@ -259,47 +311,42 @@ class _CoherenceTrendCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
     final pts = DashboardStats.coherenceTrend(sessions);
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.insights, size: 20, color: scheme.primary),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text('Coerenza nel training',
-                      style: theme.textTheme.titleMedium),
-                ),
-                if (pts.isNotEmpty)
-                  Text('${pts.length} sessioni',
-                      style: theme.textTheme.labelSmall),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Quanto l\'oscillazione cardiaca si concentra in un picco netto '
-              '(respiro in risonanza). Più alta = meglio.',
-              style: theme.textTheme.labelSmall
-                  ?.copyWith(color: scheme.onSurfaceVariant, height: 1.3),
-            ),
-            const SizedBox(height: 12),
-            if (pts.length < 3)
-              _CardPlaceholder(
-                icon: Icons.self_improvement,
-                text: 'Servono almeno 3 sessioni di training con segnale '
-                    'valido per vedere il trend (${pts.length} finora).',
-              )
-            else
-              _CoherenceChartArea(points: pts),
-          ],
-        ),
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.insights, size: 20, color: t.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text('Coerenza nel training', style: text.titleMedium),
+              ),
+              if (pts.isNotEmpty)
+                Text('${pts.length} sessioni',
+                    style: text.labelSmall?.copyWith(color: t.faint)),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Quanto l\'oscillazione cardiaca si concentra in un picco netto '
+            '(respiro in risonanza). Più alta = meglio.',
+            style: text.labelSmall?.copyWith(color: t.dim, height: 1.3),
+          ),
+          const SizedBox(height: 12),
+          if (pts.length < 3)
+            _CardPlaceholder(
+              icon: Icons.self_improvement,
+              text: 'Servono almeno 3 sessioni di training con segnale '
+                  'valido per vedere il trend (${pts.length} finora).',
+            )
+          else
+            _CoherenceChartArea(points: pts),
+        ],
       ),
     );
   }
@@ -311,8 +358,8 @@ class _CoherenceChartArea extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
     final df = DateFormat('dd/MM');
 
     final values = [for (final p in points) p.coherence];
@@ -351,7 +398,7 @@ class _CoherenceChartArea extends StatelessWidget {
               show: true,
               drawVerticalLine: false,
               getDrawingHorizontalLine: (_) => FlLine(
-                color: scheme.outlineVariant.withValues(alpha: 0.4),
+                color: t.grid,
                 strokeWidth: 0.5,
               ),
             ),
@@ -365,8 +412,8 @@ class _CoherenceChartArea extends StatelessWidget {
                   showTitles: true,
                   reservedSize: 30,
                   getTitlesWidget: (v, _) => Text(
-                    v.toStringAsFixed(1),
-                    style: theme.textTheme.labelSmall,
+                    _comma(v, 1),
+                    style: text.labelSmall?.copyWith(color: t.faint),
                   ),
                 ),
               ),
@@ -384,7 +431,7 @@ class _CoherenceChartArea extends StatelessWidget {
                       padding: const EdgeInsets.only(top: 4),
                       child: Text(
                         df.format(points[i].date.toLocal()),
-                        style: theme.textTheme.labelSmall,
+                        style: text.labelSmall?.copyWith(color: t.faint),
                       ),
                     );
                   },
@@ -394,17 +441,15 @@ class _CoherenceChartArea extends StatelessWidget {
             borderData: FlBorderData(
               show: true,
               border: Border(
-                left:
-                    BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.5)),
-                bottom:
-                    BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.5)),
+                left: BorderSide(color: t.line),
+                bottom: BorderSide(color: t.line),
               ),
             ),
             lineBarsData: [
               // Media mobile (linea di tendenza, tratteggiata).
               LineChartBarData(
                 spots: rollSpots,
-                color: scheme.secondary,
+                color: t.accent,
                 barWidth: 2,
                 isCurved: true,
                 dashArray: const [5, 4],
@@ -413,7 +458,7 @@ class _CoherenceChartArea extends StatelessWidget {
               // Coerenza per sessione, dot colorato per livello.
               LineChartBarData(
                 spots: lineSpots,
-                color: scheme.primary.withValues(alpha: 0.5),
+                color: t.primary.withValues(alpha: 0.5),
                 barWidth: 2,
                 dotData: FlDotData(
                   show: true,
@@ -423,9 +468,9 @@ class _CoherenceChartArea extends StatelessWidget {
                         (i >= 0 && i < values.length) ? values[i] : 0.0;
                     return FlDotCirclePainter(
                       radius: 3.5,
-                      color: _coherenceColor(scheme, coh),
+                      color: _coherenceColor(t, coh),
                       strokeWidth: 1.2,
-                      strokeColor: scheme.surface,
+                      strokeColor: t.surface,
                     );
                   },
                 ),
@@ -445,10 +490,10 @@ class _CoherenceChartArea extends StatelessWidget {
                   final p = points[i];
                   return LineTooltipItem(
                     '${df.format(p.date.toLocal())}\n'
-                    'coerenza ${p.coherence.toStringAsFixed(1)} '
+                    'coerenza ${_comma(p.coherence, 1)} '
                     '(${_coherenceLabel(p.coherence)})\n'
-                    '${p.bpm.toStringAsFixed(1)} bpm',
-                    TextStyle(color: scheme.onInverseSurface),
+                    '${_comma(p.bpm, 1)} bpm',
+                    TextStyle(color: t.onPrimary),
                   );
                 }).toList(),
               ),
@@ -467,9 +512,8 @@ class _CoherenceChartArea extends StatelessWidget {
         const SizedBox(height: 10),
         Row(
           children: [
-            Text('Media ${avg.toStringAsFixed(1)}',
-                style: theme.textTheme.labelMedium
-                    ?.copyWith(fontWeight: FontWeight.w600)),
+            Text('Media ${_comma(avg, 1)}',
+                style: text.labelMedium?.copyWith(fontWeight: FontWeight.w600)),
             const SizedBox(width: 12),
             Icon(
               trendPct >= 3
@@ -477,16 +521,13 @@ class _CoherenceChartArea extends StatelessWidget {
                   : (trendPct <= -3 ? Icons.trending_down : Icons.trending_flat),
               size: 16,
               color: trendPct >= 3
-                  ? scheme.primary
-                  : (trendPct <= -3
-                      ? Colors.orange.shade700
-                      : scheme.onSurfaceVariant),
+                  ? t.good
+                  : (trendPct <= -3 ? t.warn : t.dim),
             ),
             const SizedBox(width: 4),
             Text(
               '${trendPct >= 0 ? '+' : ''}${trendPct.toStringAsFixed(0)}% nel periodo',
-              style: theme.textTheme.labelSmall
-                  ?.copyWith(color: scheme.onSurfaceVariant),
+              style: text.labelSmall?.copyWith(color: t.dim),
             ),
           ],
         ),
@@ -495,9 +536,9 @@ class _CoherenceChartArea extends StatelessWidget {
           spacing: 12,
           runSpacing: 4,
           children: [
-            _legendDot(theme, scheme.primary, 'netta (≥2.5)'),
-            _legendDot(theme, scheme.secondary, 'discreta (1-2.5)'),
-            _legendDot(theme, Colors.orange.shade700, 'diffusa (<1)'),
+            _legendDot(context, t.primary, 'netta (≥2.5)'),
+            _legendDot(context, t.accent, 'discreta (1-2.5)'),
+            _legendDot(context, t.warn, 'diffusa (<1)'),
           ],
         ),
       ],
@@ -505,10 +546,10 @@ class _CoherenceChartArea extends StatelessWidget {
   }
 }
 
-Color _coherenceColor(ColorScheme scheme, double coh) {
-  if (coh >= 2.5) return scheme.primary;
-  if (coh >= 1.0) return scheme.secondary;
-  return Colors.orange.shade700;
+Color _coherenceColor(AppTokens t, double coh) {
+  if (coh >= 2.5) return t.primary;
+  if (coh >= 1.0) return t.accent;
+  return t.warn;
 }
 
 String _coherenceLabel(double coh) {
@@ -517,20 +558,18 @@ String _coherenceLabel(double coh) {
   return 'diffusa';
 }
 
-Widget _legendDot(ThemeData theme, Color c, String label) => Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 10,
-          height: 10,
-          decoration: BoxDecoration(color: c, shape: BoxShape.circle),
-        ),
-        const SizedBox(width: 5),
-        Text(label,
-            style: theme.textTheme.labelSmall
-                ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-      ],
-    );
+Widget _legendDot(BuildContext context, Color c, String label) {
+  final t = context.tokens;
+  return Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Dot(c, size: 10),
+      const SizedBox(width: 5),
+      Text(label,
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(color: t.dim)),
+    ],
+  );
+}
 
 // =============================================================================
 // 2) Impatto abitudini (RMSSD nei giorni con un fattore vs mattine pulite)
@@ -542,8 +581,8 @@ class _HabitImpactCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
     final res = DashboardStats.habitImpact(sessions);
     final maxAbs = res.impacts.isEmpty
         ? 1.0
@@ -552,54 +591,48 @@ class _HabitImpactCard extends StatelessWidget {
             .reduce(math.max)
             .clamp(1.0, double.infinity);
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.nightlife_outlined, size: 20, color: scheme.primary),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text('Impatto abitudini',
-                      style: theme.textTheme.titleMedium),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Quanto certi fattori muovono la tua HRV mattutina, rispetto alle '
-              'mattine senza alcun fattore segnalato.',
-              style: theme.textTheme.labelSmall
-                  ?.copyWith(color: scheme.onSurfaceVariant, height: 1.3),
-            ),
-            const SizedBox(height: 14),
-            if (!res.hasData)
-              _CardPlaceholder(
-                icon: Icons.local_bar_outlined,
-                text: 'Servono almeno ${DashboardStats.minSamples} mattine '
-                    '"pulite" e ${DashboardStats.minSamples} con un fattore '
-                    '(alcol, sonno scarso, malattia…) segnalato al check-in.',
-              )
-            else ...[
-              for (final imp in res.impacts)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 5),
-                  child: _HabitBarRow(impact: imp, maxAbs: maxAbs),
-                ),
-              const SizedBox(height: 10),
-              Text(
-                'Baseline mattine pulite: '
-                'RMSSD ${res.cleanBaseline!.toStringAsFixed(0)} ms '
-                '(${res.cleanCount} mattine).',
-                style: theme.textTheme.labelSmall
-                    ?.copyWith(color: scheme.onSurfaceVariant),
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.nightlife_outlined, size: 20, color: t.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text('Impatto abitudini', style: text.titleMedium),
               ),
             ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Quanto certi fattori muovono la tua HRV mattutina, rispetto alle '
+            'mattine senza alcun fattore segnalato.',
+            style: text.labelSmall?.copyWith(color: t.dim, height: 1.3),
+          ),
+          const SizedBox(height: 14),
+          if (!res.hasData)
+            _CardPlaceholder(
+              icon: Icons.local_bar_outlined,
+              text: 'Servono almeno ${DashboardStats.minSamples} mattine '
+                  '"pulite" e ${DashboardStats.minSamples} con un fattore '
+                  '(alcol, sonno scarso, malattia…) segnalato al check-in.',
+            )
+          else ...[
+            for (final imp in res.impacts)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 5),
+                child: _HabitBarRow(impact: imp, maxAbs: maxAbs),
+              ),
+            const SizedBox(height: 10),
+            Text(
+              'Baseline mattine pulite: '
+              'RMSSD ${res.cleanBaseline!.toStringAsFixed(0)} ms '
+              '(${res.cleanCount} mattine).',
+              style: text.labelSmall?.copyWith(color: t.dim),
+            ),
           ],
-        ),
+        ],
       ),
     );
   }
@@ -612,11 +645,11 @@ class _HabitBarRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
     final delta = impact.deltaPct ?? 0;
-    // Calo HRV = arancio (cautela, non allarme); aumento = primary.
-    final color = delta < 0 ? Colors.orange.shade700 : scheme.primary;
+    // Calo HRV = warn (cautela, non allarme); aumento = primary.
+    final color = delta < 0 ? t.warn : t.primary;
     final factor = (delta.abs() / maxAbs).clamp(0.03, 1.0);
     final sign = delta >= 0 ? '+' : '';
 
@@ -625,15 +658,14 @@ class _HabitBarRow extends StatelessWidget {
         SizedBox(
           width: 100,
           child: Text(impact.label,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.labelMedium),
+              overflow: TextOverflow.ellipsis, style: text.labelMedium),
         ),
         Expanded(
           child: ClipRRect(
             borderRadius: BorderRadius.circular(4),
             child: Container(
               height: 18,
-              color: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
+              color: t.tonal2,
               child: FractionallySizedBox(
                 alignment: Alignment.centerLeft,
                 widthFactor: factor,
@@ -647,7 +679,7 @@ class _HabitBarRow extends StatelessWidget {
           child: Text(
             '$sign${delta.toStringAsFixed(0)}%',
             textAlign: TextAlign.end,
-            style: theme.textTheme.labelMedium
+            style: text.labelMedium
                 ?.copyWith(color: color, fontWeight: FontWeight.w700),
           ),
         ),
@@ -660,6 +692,9 @@ class _HabitBarRow extends StatelessWidget {
 // Helper condivisi della schermata
 // =============================================================================
 
+String _comma(double v, int digits) =>
+    v.toStringAsFixed(digits).replaceAll('.', ',');
+
 /// Placeholder compatto dentro una card quando i dati non bastano per un grafico.
 class _CardPlaceholder extends StatelessWidget {
   final IconData icon;
@@ -668,24 +703,23 @@ class _CardPlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
+    final t = context.tokens;
+    final textTheme = Theme.of(context).textTheme;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 12),
       decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withValues(alpha: 0.4),
-        borderRadius: BorderRadius.circular(10),
+        color: t.tonal,
+        borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
         children: [
-          Icon(icon, size: 32, color: scheme.outline),
+          Icon(icon, size: 32, color: t.faint),
           const SizedBox(height: 8),
           Text(
             text,
             textAlign: TextAlign.center,
-            style: theme.textTheme.bodySmall
-                ?.copyWith(color: scheme.onSurfaceVariant, height: 1.35),
+            style: textTheme.bodySmall?.copyWith(color: t.dim, height: 1.35),
           ),
         ],
       ),
@@ -723,20 +757,19 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(Icons.insights, size: 64, color: scheme.outline),
+        Icon(Icons.insights, size: 64, color: t.faint),
         const SizedBox(height: 12),
         Text(
           'Nessuna sessione negli ultimi $kHrvDashboardWindowDays giorni.\n'
           'Registra qualche allenamento e check-in mattutino: qui vedrai '
           'come si evolve la tua HRV nel tempo.',
           textAlign: TextAlign.center,
-          style: theme.textTheme.bodyMedium
-              ?.copyWith(color: scheme.onSurfaceVariant, height: 1.4),
+          style: text.bodyMedium?.copyWith(color: t.dim, height: 1.4),
         ),
       ],
     );

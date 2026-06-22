@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
+import '../../../core/theme/app_tokens.dart';
+import '../../ui/ui.dart';
 import '../session_chart_utils.dart';
 import '../session_models.dart';
 
@@ -32,7 +34,7 @@ class LnRmssdTrendCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
+    final t = context.tokens;
 
     // Spot lnRMSSD: indici di posizione, non di tempo (asse categorico). I
     // valori non finiti vengono saltati ma l'indice X resta allineato all'array
@@ -85,10 +87,8 @@ class LnRmssdTrendCard extends StatelessWidget {
         : (sessions.length / 5).ceil().clamp(1, sessions.length - 1).toDouble();
     final df = DateFormat('dd/MM');
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
+    return AppCard(
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -99,7 +99,7 @@ class LnRmssdTrendCard extends StatelessWidget {
                 ),
                 Text('Tap punto = dettaglio',
                     style: theme.textTheme.labelSmall?.copyWith(
-                      color: scheme.outline,
+                      color: t.faint,
                     )),
               ],
             ),
@@ -119,7 +119,7 @@ class LnRmssdTrendCard extends StatelessWidget {
                       HorizontalRangeAnnotation(
                         y1: bandLow,
                         y2: bandHigh,
-                        color: scheme.primary.withValues(alpha: 0.10),
+                        color: t.primary.withValues(alpha: 0.10),
                       ),
                   ],
                 ),
@@ -127,7 +127,7 @@ class LnRmssdTrendCard extends StatelessWidget {
                   show: true,
                   drawVerticalLine: false,
                   getDrawingHorizontalLine: (_) => FlLine(
-                    color: scheme.outlineVariant.withValues(alpha: 0.4),
+                    color: t.grid,
                     strokeWidth: 0.5,
                   ),
                 ),
@@ -141,8 +141,8 @@ class LnRmssdTrendCard extends StatelessWidget {
                       showTitles: true,
                       reservedSize: 32,
                       getTitlesWidget: (v, _) => Text(
-                        v.toStringAsFixed(1),
-                        style: theme.textTheme.labelSmall,
+                        v.toStringAsFixed(1).replaceAll('.', ','),
+                        style: theme.textTheme.labelSmall?.copyWith(color: t.faint),
                       ),
                     ),
                   ),
@@ -160,7 +160,7 @@ class LnRmssdTrendCard extends StatelessWidget {
                           padding: const EdgeInsets.only(top: 4),
                           child: Text(
                             df.format(sessions[i].startedAt.toLocal()),
-                            style: theme.textTheme.labelSmall,
+                            style: theme.textTheme.labelSmall?.copyWith(color: t.faint),
                           ),
                         );
                       },
@@ -170,10 +170,8 @@ class LnRmssdTrendCard extends StatelessWidget {
                 borderData: FlBorderData(
                   show: true,
                   border: Border(
-                    left: BorderSide(
-                        color: scheme.outlineVariant.withValues(alpha: 0.5)),
-                    bottom: BorderSide(
-                        color: scheme.outlineVariant.withValues(alpha: 0.5)),
+                    left: BorderSide(color: t.line),
+                    bottom: BorderSide(color: t.line),
                   ),
                 ),
                 // Linea della media baseline come riferimento al centro della
@@ -183,7 +181,7 @@ class LnRmssdTrendCard extends StatelessWidget {
                     if (lnValues.isNotEmpty)
                       HorizontalLine(
                         y: mean,
-                        color: scheme.outline.withValues(alpha: 0.6),
+                        color: t.dim.withValues(alpha: 0.6),
                         strokeWidth: 1,
                         dashArray: const [3, 4],
                       ),
@@ -194,7 +192,7 @@ class LnRmssdTrendCard extends StatelessWidget {
                     spots: lnSpots,
                     // Linea neutra di collegamento: il segnale di contesto sta
                     // nei pallini, non nel colore della linea.
-                    color: scheme.primary.withValues(alpha: 0.55),
+                    color: t.primary.withValues(alpha: 0.55),
                     barWidth: 2,
                     dotData: FlDotData(
                       show: true,
@@ -203,12 +201,12 @@ class LnRmssdTrendCard extends StatelessWidget {
                         final i = spot.x.toInt();
                         final c = (i >= 0 && i < sessions.length)
                             ? tagColor(sessions[i].tag)
-                            : scheme.primary;
+                            : t.primary;
                         return FlDotCirclePainter(
                           radius: 3.5,
                           color: c,
                           strokeWidth: 1.2,
-                          strokeColor: scheme.surface,
+                          strokeColor: t.surface,
                         );
                       },
                     ),
@@ -227,9 +225,9 @@ class LnRmssdTrendCard extends StatelessWidget {
                       return LineTooltipItem(
                         '${df.format(sess.startedAt.toLocal())}\n'
                         '${sess.tag.label}\n'
-                        'lnRMSSD ${s.y.toStringAsFixed(2)} '
+                        'lnRMSSD ${s.y.toStringAsFixed(2).replaceAll('.', ',')} '
                         '(RMSSD ${sess.metrics.rmssdMs.toStringAsFixed(0)})',
-                        TextStyle(color: scheme.onInverseSurface),
+                        TextStyle(color: t.onPrimary),
                       );
                     }).toList(),
                   ),
@@ -256,12 +254,12 @@ class LnRmssdTrendCard extends StatelessWidget {
               children: [
                 Text(
                   'CV(lnRMSSD) 7gg: '
-                  '${cv7 == null ? '—' : '${cv7.toStringAsFixed(1)}%'}',
+                  '${cv7 == null ? '—' : '${cv7.toStringAsFixed(1).replaceAll('.', ',')}%'}',
                   style: theme.textTheme.labelMedium?.copyWith(
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                _bandLegend(scheme, 'Baseline ±1 SD'),
+                _bandLegend(context, 'Baseline ±1 SD'),
               ],
             ),
             const SizedBox(height: 8),
@@ -276,16 +274,15 @@ class LnRmssdTrendCard extends StatelessWidget {
               child: ListView(
                 scrollDirection: Axis.horizontal,
                 children: [
-                  for (final t in SessionTag.values)
+                  for (final tag in SessionTag.values)
                     Padding(
                       padding: const EdgeInsets.only(right: 12),
-                      child: _legend(tagColor(t), t.label),
+                      child: _legend(context, tagColor(tag), tag.label),
                     ),
                 ],
               ),
             ),
           ],
-        ),
       ),
     );
   }
@@ -308,38 +305,42 @@ class LnRmssdTrendCard extends StatelessWidget {
     return 100.0 * math.sqrt(variance) / m.abs();
   }
 
-  Widget _legend(Color c, String label) => Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 10,
-            height: 10,
-            decoration: BoxDecoration(color: c, shape: BoxShape.circle),
-          ),
-          const SizedBox(width: 5),
-          Text(label),
-        ],
-      );
+  Widget _legend(BuildContext context, Color c, String label) {
+    final t = context.tokens;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Dot(c, size: 10),
+        const SizedBox(width: 5),
+        Text(label,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(color: t.dim)),
+      ],
+    );
+  }
 
-  Widget _bandLegend(ColorScheme scheme, String label) => Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 18,
-            height: 12,
-            decoration: BoxDecoration(
-              color: scheme.primary.withValues(alpha: 0.12),
-              border: Border.all(
-                color: scheme.outline.withValues(alpha: 0.5),
-                width: 0.5,
-              ),
-              borderRadius: BorderRadius.circular(2),
+  Widget _bandLegend(BuildContext context, String label) {
+    final t = context.tokens;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 18,
+          height: 12,
+          decoration: BoxDecoration(
+            color: t.primary.withValues(alpha: 0.12),
+            border: Border.all(
+              color: t.line,
+              width: 0.5,
             ),
+            borderRadius: BorderRadius.circular(2),
           ),
-          const SizedBox(width: 6),
-          Text(label),
-        ],
-      );
+        ),
+        const SizedBox(width: 6),
+        Text(label,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(color: t.dim)),
+      ],
+    );
+  }
 }
 
 /// Sparkline sottile e separata per l'HRV score (0-100). Tenuta fuori dall'asse
@@ -352,14 +353,13 @@ class _ScoreSparkline extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
+    final t = context.tokens;
     if (spots.length < 2) return const SizedBox.shrink();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text('HRV score (0-100)',
-            style: theme.textTheme.labelSmall
-                ?.copyWith(color: scheme.outline)),
+            style: theme.textTheme.labelSmall?.copyWith(color: t.faint)),
         const SizedBox(height: 2),
         SizedBox(
           height: 36,
@@ -375,12 +375,12 @@ class _ScoreSparkline extends StatelessWidget {
             lineBarsData: [
               LineChartBarData(
                 spots: spots,
-                color: scheme.secondary,
+                color: t.accent,
                 barWidth: 1.5,
                 dotData: const FlDotData(show: false),
                 belowBarData: BarAreaData(
                   show: true,
-                  color: scheme.secondary.withValues(alpha: 0.12),
+                  color: t.accent.withValues(alpha: 0.12),
                 ),
               ),
             ],

@@ -1,12 +1,15 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../../shared/hrv/breathing_pacer.dart';
 
-/// Cerchio animato che si espande/contrae seguendo lo stato del pacer.
-/// Riceve un [amplitude] (0..1) e una [phase] e disegna:
-///  - un cerchio esterno statico con glow
-///  - un cerchio interno che cresce/decresce sull'amplitude
-///  - un ring di progresso per la fase corrente
+/// Orb respiratorio del mockup: sfera con gradiente inspira→espira che pulsa
+/// sull'[amplitude], alone sfocato che respira con essa e arco di progresso
+/// della fase corrente. L'etichetta ("Inspira"/"Espira"…) è bianca con ombra.
+///
+/// API invariata rispetto alla versione precedente: riceve [amplitude] (0..1),
+/// [phase], [phaseProgress] e i colori delle due fasi.
 class BreathingOrb extends StatelessWidget {
   final double amplitude;
   final BreathingPhase phase;
@@ -21,35 +24,33 @@ class BreathingOrb extends StatelessWidget {
     required this.phase,
     required this.phaseProgress,
     this.size = 280,
-    this.inhaleColor = const Color(0xFF4FB3A9),
-    this.exhaleColor = const Color(0xFF2E7D78),
+    this.inhaleColor = const Color(0xFF4FB3BF),
+    this.exhaleColor = const Color(0xFF14695E),
   });
 
   @override
   Widget build(BuildContext context) {
-    final color = switch (phase) {
-      BreathingPhase.inhale => inhaleColor,
-      BreathingPhase.exhale => exhaleColor,
-      _ => Color.lerp(inhaleColor, exhaleColor, 0.5)!,
-    };
+    final fontSize = (size * 0.12).clamp(16.0, 26.0);
     return SizedBox(
       width: size,
       height: size,
       child: CustomPaint(
         painter: _OrbPainter(
-          amplitude: amplitude,
+          amplitude: amplitude.clamp(0.0, 1.0),
           phaseProgress: phaseProgress,
-          color: color,
+          inhaleColor: inhaleColor,
+          exhaleColor: exhaleColor,
         ),
         child: Center(
-          child: AnimatedDefaultTextStyle(
-            duration: const Duration(milliseconds: 250),
-            style: Theme.of(context)
-                    .textTheme
-                    .headlineMedium
-                    ?.copyWith(fontWeight: FontWeight.w300) ??
-                const TextStyle(fontSize: 28),
-            child: Text(_label(phase)),
+          child: Text(
+            _label(phase),
+            style: TextStyle(
+              fontFamily: 'Figtree',
+              fontSize: fontSize,
+              fontWeight: FontWeight.w600,
+              color: Colors.white,
+              shadows: const [Shadow(color: Color(0x73002A2D), blurRadius: 10, offset: Offset(0, 1))],
+            ),
           ),
         ),
       ),
@@ -67,59 +68,67 @@ class BreathingOrb extends StatelessWidget {
 class _OrbPainter extends CustomPainter {
   final double amplitude;
   final double phaseProgress;
-  final Color color;
+  final Color inhaleColor;
+  final Color exhaleColor;
 
   _OrbPainter({
     required this.amplitude,
     required this.phaseProgress,
-    required this.color,
+    required this.inhaleColor,
+    required this.exhaleColor,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    final c = Offset(size.width / 2, size.height / 2);
+    final c = size.center(Offset.zero);
     final rMax = size.shortestSide / 2;
-    final rInner = rMax * (0.35 + 0.55 * amplitude);
+    // La sfera respira tra ~62% e 100% del raggio disponibile (come il mockup).
+    final rInner = rMax * (0.62 + 0.38 * amplitude) * 0.78;
 
-    // Glow esterno
+    // Alone sfocato: pulsa di intensità e dimensione con l'amplitude.
     final glow = Paint()
-      ..shader = RadialGradient(
-        colors: [color.withValues(alpha: 0.35), color.withValues(alpha: 0.0)],
-      ).createShader(Rect.fromCircle(center: c, radius: rMax));
-    canvas.drawCircle(c, rMax, glow);
-
-    // Ring anello sottile
-    final ring = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2
-      ..color = color.withValues(alpha: 0.25);
-    canvas.drawCircle(c, rMax - 6, ring);
-
-    // Orb riempito
-    final orb = Paint()
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 14)
       ..shader = RadialGradient(
         colors: [
-          color.withValues(alpha: 0.95),
-          color.withValues(alpha: 0.6),
+          inhaleColor.withValues(alpha: 0.10 + 0.34 * amplitude),
+          inhaleColor.withValues(alpha: 0.0),
         ],
-      ).createShader(Rect.fromCircle(center: c, radius: rInner));
-    canvas.drawCircle(c, rInner, orb);
+        stops: const [0.25, 1.0],
+      ).createShader(Rect.fromCircle(center: c, radius: rMax));
+    canvas.drawCircle(c, rMax * (0.8 + 0.2 * amplitude), glow);
 
-    // Progresso di fase (arco in alto)
+    // Traccia dell'arco (tenue) + arco di progresso della fase.
+    final trackR = rMax - 3;
+    final track = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.5
+      ..color = inhaleColor.withValues(alpha: 0.4);
+    canvas.drawCircle(c, trackR, track);
+
     final arc = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 4
+      ..strokeWidth = 2.5
       ..strokeCap = StrokeCap.round
-      ..color = color;
-    final rect = Rect.fromCircle(center: c, radius: rMax - 6);
-    const startAngle = -1.5708; // -pi/2
-    final sweep = phaseProgress.clamp(0.0, 1.0) * 6.2832;
-    canvas.drawArc(rect, startAngle, sweep, false, arc);
+      ..color = inhaleColor;
+    final sweep = phaseProgress.clamp(0.0, 1.0) * 2 * math.pi;
+    if (sweep > 0) {
+      canvas.drawArc(Rect.fromCircle(center: c, radius: trackR), -math.pi / 2, sweep, false, arc);
+    }
+
+    // Sfera con gradiente inspira (alto) → espira (basso).
+    final orb = Paint()
+      ..shader = RadialGradient(
+        center: const Alignment(0, -0.35),
+        radius: 0.95,
+        colors: [inhaleColor, exhaleColor],
+      ).createShader(Rect.fromCircle(center: c, radius: rInner));
+    canvas.drawCircle(c, rInner, orb);
   }
 
   @override
-  bool shouldRepaint(covariant _OrbPainter oldDelegate) =>
-      oldDelegate.amplitude != amplitude ||
-      oldDelegate.phaseProgress != phaseProgress ||
-      oldDelegate.color != color;
+  bool shouldRepaint(covariant _OrbPainter old) =>
+      old.amplitude != amplitude ||
+      old.phaseProgress != phaseProgress ||
+      old.inhaleColor != inhaleColor ||
+      old.exhaleColor != exhaleColor;
 }

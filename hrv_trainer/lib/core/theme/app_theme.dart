@@ -1,168 +1,240 @@
 import 'package:flutter/material.dart';
 
-/// Palette cromatica dell'app HRV Trainer: toni calmi ma clinici.
-class AppColors {
-  AppColors._();
+import 'app_tokens.dart';
 
-  // Seed primario: petrolio profondo, evoca respiro e stabilita'.
-  static const Color primary = Color(0xFF0F6F7A);
-  // Container primario: petrolio desaturato per superfici tonali.
-  static const Color primaryContainer = Color(0xFFBCE4E8);
-  // Secondario: verde muschio caldo, richiamo naturale e atletico.
-  static const Color secondary = Color(0xFF6B8F5A);
-  // Tinta di superficie per elevazioni Material 3.
-  static const Color surfaceTint = Color(0xFF0F6F7A);
-
-  // Fase inspiratoria: teal chiaro, leggerezza e apertura.
-  static const Color inhale = Color(0xFF4FB3BF);
-  // Fase espiratoria: verde-turchese profondo, rilascio e radicamento.
-  static const Color exhale = Color(0xFF14695E);
-
-  // Stati semantici: chiarezza clinica senza saturazioni aggressive.
-  static const Color success = Color(0xFF2E7D5B);
-  static const Color warning = Color(0xFFB8791F);
-  static const Color error = Color(0xFFB3261E);
-
-  // Varianti dark: desaturate e luminose per contrasto AA su sfondo scuro.
-  static const Color primaryDark = Color(0xFF5FD3DE);
-  static const Color primaryContainerDark = Color(0xFF004E56);
-  static const Color secondaryDark = Color(0xFFA7C896);
-  static const Color surfaceTintDark = Color(0xFF5FD3DE);
-
-  // Fasi respiratorie in dark: piu' luminose per leggibilita'.
-  static const Color inhaleDark = Color(0xFF7FD4DE);
-  static const Color exhaleDark = Color(0xFF4FB8A5);
-
-  // Stati semantici dark.
-  static const Color successDark = Color(0xFF6BBF94);
-  static const Color warningDark = Color(0xFFE3B56A);
-  static const Color errorDark = Color(0xFFF2B8B5);
-}
-
-/// Factory dei temi Material 3 per modalita' chiara e scura.
+/// Factory dei temi Material 3 chiaro/scuro, costruiti dai token semantici
+/// in [AppTokens]. Strategia a doppio binario:
+///  - il [ColorScheme] viene "pinnato" sui token così i widget Material
+///    generici (Card, Chip, FilledButton, NavigationBar…) restano on-brand
+///    senza toccare ogni schermata;
+///  - i bisogni su misura (good/warn/alert, inhale/exhale, griglie) si leggono
+///    da `context.tokens`.
 class AppTheme {
   AppTheme._();
 
-  // TextTheme condiviso: usa font di sistema (San Francisco / Roboto).
-  static TextTheme _buildTextTheme(Color onSurface) {
+  /// TextTheme su Figtree. Cifre tabellari sugli stili numerici (countdown,
+  /// bpm, RMSSD, z-score) per allineare le colonne di numeri.
+  static TextTheme _textTheme(Color onSurface) {
+    const tabular = <FontFeature>[FontFeature.tabularFigures()];
+    TextStyle s(
+      double size,
+      FontWeight weight, {
+      double? height,
+      double? spacing,
+      bool tab = false,
+    }) {
+      return TextStyle(
+        fontFamily: 'Figtree',
+        fontSize: size,
+        fontWeight: weight,
+        height: height,
+        letterSpacing: spacing,
+        color: onSurface,
+        fontFeatures: tab ? tabular : null,
+      );
+    }
+
     return TextTheme(
-      displayLarge: TextStyle(fontSize: 57, fontWeight: FontWeight.w300, letterSpacing: -0.5, color: onSurface),
-      displayMedium: TextStyle(fontSize: 45, fontWeight: FontWeight.w300, color: onSurface),
-      displaySmall: TextStyle(fontSize: 36, fontWeight: FontWeight.w400, color: onSurface),
-      headlineLarge: TextStyle(fontSize: 32, fontWeight: FontWeight.w500, color: onSurface),
-      headlineMedium: TextStyle(fontSize: 28, fontWeight: FontWeight.w500, color: onSurface),
-      headlineSmall: TextStyle(fontSize: 24, fontWeight: FontWeight.w500, color: onSurface),
-      titleLarge: TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: onSurface),
-      titleMedium: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, letterSpacing: 0.15, color: onSurface),
-      titleSmall: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, letterSpacing: 0.1, color: onSurface),
-      bodyLarge: TextStyle(fontSize: 16, fontWeight: FontWeight.w400, letterSpacing: 0.5, height: 1.5, color: onSurface),
-      bodyMedium: TextStyle(fontSize: 14, fontWeight: FontWeight.w400, letterSpacing: 0.25, height: 1.45, color: onSurface),
-      bodySmall: TextStyle(fontSize: 12, fontWeight: FontWeight.w400, letterSpacing: 0.4, color: onSurface),
-      labelLarge: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, letterSpacing: 0.1, color: onSurface),
-      labelMedium: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, letterSpacing: 0.5, color: onSurface),
-      labelSmall: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.5, color: onSurface),
+      displayLarge: s(44, FontWeight.w700, spacing: -0.5, tab: true),
+      displayMedium: s(40, FontWeight.w700, spacing: -0.25, tab: true),
+      displaySmall: s(32, FontWeight.w600, tab: true),
+      headlineLarge: s(28, FontWeight.w700, tab: true),
+      headlineMedium: s(25, FontWeight.w600, spacing: -0.2, tab: true),
+      headlineSmall: s(24, FontWeight.w700, spacing: -0.2, tab: true),
+      titleLarge: s(22, FontWeight.w600, spacing: -0.1, tab: true),
+      titleMedium: s(17, FontWeight.w600, tab: true),
+      titleSmall: s(14, FontWeight.w600, spacing: 0.1, tab: true),
+      bodyLarge: s(16, FontWeight.w400, height: 1.5, spacing: 0.1),
+      bodyMedium: s(14, FontWeight.w400, height: 1.45, spacing: 0.1),
+      bodySmall: s(12.5, FontWeight.w400, height: 1.4, spacing: 0.2),
+      labelLarge: s(14, FontWeight.w600, spacing: 0.1, tab: true),
+      labelMedium: s(12, FontWeight.w600, spacing: 0.3, tab: true),
+      labelSmall: s(11, FontWeight.w500, spacing: 0.4, tab: true),
     );
   }
 
-  /// Tema chiaro: sfondi off-white, contrasti morbidi, accenti petrolio.
-  static ThemeData light() {
-    // ColorScheme generato dal seed petrolio per armonia Material 3.
+  static ThemeData _build(AppTokens t, Brightness brightness) {
+    // Seed dal petrolio per armonia Material 3, poi pin dei ruoli portanti
+    // sui token così l'identità resta esatta e non "derivata".
     final ColorScheme scheme = ColorScheme.fromSeed(
-      seedColor: AppColors.primary,
-      brightness: Brightness.light,
-      primary: AppColors.primary,
-      secondary: AppColors.secondary,
-      error: AppColors.error,
-      surfaceTint: AppColors.surfaceTint,
+      seedColor: t.primary,
+      brightness: brightness,
+    ).copyWith(
+      primary: t.primary,
+      onPrimary: t.onPrimary,
+      primaryContainer: t.primaryTonal,
+      onPrimaryContainer: t.primary,
+      secondary: t.accent,
+      onSecondary: t.onPrimary,
+      secondaryContainer: t.accentTonal,
+      onSecondaryContainer: t.accent,
+      surface: t.surface,
+      onSurface: t.text,
+      onSurfaceVariant: t.dim,
+      surfaceContainerLowest: t.surface,
+      surfaceContainerLow: t.tonal,
+      surfaceContainer: t.tonal,
+      surfaceContainerHigh: t.tonal,
+      surfaceContainerHighest: t.tonal2,
+      outline: t.faint,
+      outlineVariant: t.line,
+      error: t.alert,
+      onError: t.onPrimary,
+      surfaceTint: Colors.transparent,
     );
+
+    final textTheme = _textTheme(t.text);
 
     return ThemeData(
       useMaterial3: true,
+      brightness: brightness,
       colorScheme: scheme,
-      scaffoldBackgroundColor: const Color(0xFFF7F9F9),
-      textTheme: _buildTextTheme(scheme.onSurface),
+      scaffoldBackgroundColor: t.screenBg,
+      fontFamily: 'Figtree',
+      textTheme: textTheme,
+      extensions: <ThemeExtension<dynamic>>[t],
+      iconTheme: IconThemeData(color: t.dim),
 
-      // AppBar piatta, centrata, con tono superficie per minimalismo clinico.
+      // AppBar piatta, fusa con lo scaffold (le schermate usano header espliciti).
       appBarTheme: AppBarTheme(
-        backgroundColor: scheme.surface,
-        foregroundColor: scheme.onSurface,
+        backgroundColor: t.screenBg,
+        foregroundColor: t.text,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
-        scrolledUnderElevation: 1,
-        centerTitle: true,
-        titleTextStyle: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: scheme.onSurface),
+        scrolledUnderElevation: 0,
+        centerTitle: false,
+        titleTextStyle: textTheme.titleLarge,
+        iconTheme: IconThemeData(color: t.text),
       ),
 
-      // Card con bordi morbidi e superficie tonale per profondita' calma.
+      // Card bordata: superficie piena + 1px di linea, raggio ampio.
       cardTheme: CardThemeData(
-        color: scheme.surfaceContainerLow,
+        color: t.surface,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
-        margin: const EdgeInsets.all(8),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      ),
-
-      // FilledButton grande e rotondo, ottimo per target touch durante sessioni.
-      filledButtonTheme: FilledButtonThemeData(
-        style: FilledButton.styleFrom(
-          minimumSize: const Size(64, 52),
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, letterSpacing: 0.2),
+        margin: EdgeInsets.zero,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(24),
+          side: BorderSide(color: t.line, width: 1),
         ),
       ),
 
-      // Divisori impercettibili per non affaticare la vista in biofeedback.
-      dividerTheme: DividerThemeData(color: scheme.outlineVariant, thickness: 1, space: 1),
-    );
-  }
-
-  /// Tema scuro: ideale per sessioni serali e modalita' notturna da atleta.
-  static ThemeData dark() {
-    // ColorScheme scuro derivato dallo stesso seed per coerenza visiva.
-    final ColorScheme scheme = ColorScheme.fromSeed(
-      seedColor: AppColors.primary,
-      brightness: Brightness.dark,
-      primary: AppColors.primaryDark,
-      secondary: AppColors.secondaryDark,
-      error: AppColors.errorDark,
-      surfaceTint: AppColors.surfaceTintDark,
-    );
-
-    return ThemeData(
-      useMaterial3: true,
-      colorScheme: scheme,
-      scaffoldBackgroundColor: const Color(0xFF0E1515),
-      textTheme: _buildTextTheme(scheme.onSurface),
-
-      // AppBar scura senza elevazione per continuita' con scaffold.
-      appBarTheme: AppBarTheme(
-        backgroundColor: scheme.surface,
-        foregroundColor: scheme.onSurface,
-        elevation: 0,
-        scrolledUnderElevation: 1,
-        centerTitle: true,
-        titleTextStyle: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: scheme.onSurface),
+      // Chip stadio su superficie tonale; selezione su primary-tonal.
+      chipTheme: ChipThemeData(
+        backgroundColor: t.tonal,
+        selectedColor: t.primaryTonal,
+        secondarySelectedColor: t.primaryTonal,
+        checkmarkColor: t.primary,
+        disabledColor: t.tonal,
+        side: BorderSide.none,
+        shape: const StadiumBorder(),
+        labelStyle: textTheme.labelLarge?.copyWith(color: t.dim),
+        secondaryLabelStyle: textTheme.labelLarge?.copyWith(color: t.primary),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        showCheckmark: false,
       ),
 
-      // Card con superficie elevata tonale: profondita' senza bagliori.
-      cardTheme: CardThemeData(
-        color: scheme.surfaceContainerHigh,
-        elevation: 0,
-        margin: const EdgeInsets.all(8),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      ),
-
-      // FilledButton coerente con il tema chiaro per consistenza muscolare.
+      // Bottoni pieni grandi e rotondi, ottimi come target touch in sessione.
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
-          minimumSize: const Size(64, 52),
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+          backgroundColor: t.primary,
+          foregroundColor: t.onPrimary,
+          minimumSize: const Size(64, 54),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 15),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, letterSpacing: 0.2),
+          textStyle: textTheme.labelLarge?.copyWith(fontSize: 15),
         ),
       ),
 
-      // Divisori tenui per sessioni in ambienti poco illuminati.
-      dividerTheme: DividerThemeData(color: scheme.outlineVariant, thickness: 1, space: 1),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: t.text,
+          minimumSize: const Size(64, 54),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 15),
+          side: BorderSide(color: t.line, width: 1),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          textStyle: textTheme.labelLarge?.copyWith(fontSize: 15),
+        ),
+      ),
+
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          foregroundColor: t.dim,
+          textStyle: textTheme.labelLarge,
+        ),
+      ),
+
+      // NavigationBar con pillola primary-tonal sotto l'icona attiva.
+      navigationBarTheme: NavigationBarThemeData(
+        backgroundColor: t.surface,
+        surfaceTintColor: Colors.transparent,
+        indicatorColor: t.primaryTonal,
+        indicatorShape: const StadiumBorder(),
+        height: 66,
+        elevation: 0,
+        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+        iconTheme: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
+          return IconThemeData(size: 24, color: selected ? t.primary : t.faint);
+        }),
+        labelTextStyle: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
+          return textTheme.labelSmall?.copyWith(
+            color: selected ? t.primary : t.faint,
+            fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+          );
+        }),
+      ),
+
+      switchTheme: SwitchThemeData(
+        thumbColor: WidgetStateProperty.resolveWith((states) =>
+            states.contains(WidgetState.selected) ? Colors.white : t.faint),
+        trackColor: WidgetStateProperty.resolveWith((states) =>
+            states.contains(WidgetState.selected) ? t.primary : t.tonal2),
+        trackOutlineColor: WidgetStateProperty.all(Colors.transparent),
+      ),
+
+      sliderTheme: SliderThemeData(
+        activeTrackColor: t.primary,
+        inactiveTrackColor: t.tonal2,
+        thumbColor: t.primary,
+        overlayColor: t.primary.withValues(alpha: 0.12),
+      ),
+
+      progressIndicatorTheme: ProgressIndicatorThemeData(
+        color: t.primary,
+        linearTrackColor: t.tonal2,
+        circularTrackColor: t.tonal2,
+      ),
+
+      dividerTheme: DividerThemeData(color: t.line, thickness: 1, space: 1),
+
+      snackBarTheme: SnackBarThemeData(
+        backgroundColor: t.text,
+        contentTextStyle: textTheme.bodyMedium?.copyWith(color: t.surface),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      ),
+
+      dialogTheme: DialogThemeData(
+        backgroundColor: t.surface,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      ),
+
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: t.surface,
+        surfaceTintColor: Colors.transparent,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+      ),
     );
   }
+
+  /// Tema chiaro: sfondi off-white verdognoli, accenti petrolio.
+  static ThemeData light() => _build(AppTokens.light, Brightness.light);
+
+  /// Tema scuro: notturno profondo per sessioni serali.
+  static ThemeData dark() => _build(AppTokens.dark, Brightness.dark);
 }

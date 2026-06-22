@@ -9,13 +9,12 @@ import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../../core/theme/app_tokens.dart';
 import '../../shared/connect_iq/hr_source_provider.dart';
-import '../../shared/hrv/hrv_metrics.dart';
 import '../../shared/hrv/session_chart_utils.dart';
 import '../../shared/hrv/session_models.dart';
-import '../../shared/hrv/widgets/hrv_histogram.dart';
-import '../../shared/hrv/widgets/ln_rmssd_trend_card.dart';
 import '../../shared/storage/session_repository.dart';
+import '../../shared/ui/ui.dart';
 import '../home/state/readiness_provider.dart';
 
 /// Finestra temporale del filtro storico.
@@ -83,29 +82,108 @@ class HistoryScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final filter = ref.watch(historyFilterProvider);
     final sessions = ref.watch(sessionsListProvider);
+    final text = Theme.of(context).textTheme;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Storico & trend'),
-        actions: const [
-          _SyncWatchAction(),
-          _BackupMenu(),
+      body: SafeArea(
+        bottom: false,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 8, 4),
+              child: Row(
+                children: [
+                  Expanded(child: Text('Storico', style: text.headlineSmall)),
+                  IconButton(
+                    tooltip: 'Filtri',
+                    icon: const Icon(Icons.tune),
+                    onPressed: () => _showFilterSheet(context, ref),
+                  ),
+                  const _SyncWatchAction(),
+                  const _BackupMenu(),
+                ],
+              ),
+            ),
+            _TagFilterStrip(filter: filter),
+            const SizedBox(height: 6),
+            Expanded(
+              child: sessions.when(
+                loading: () => const Center(child: CircularProgressIndicator()),
+                error: (e, _) => Center(child: Text('Errore: $e')),
+                data: (list) => list.isEmpty
+                    ? const _EmptyState()
+                    : _HistoryBody(sessions: list),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Striscia orizzontale di chip per il filtro rapido per tag (oltre al pannello
+/// completo dietro l'icona "tune", che gestisce anche la finestra temporale).
+class _TagFilterStrip extends ConsumerWidget {
+  final HistoryFilter filter;
+  const _TagFilterStrip({required this.filter});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final notifier = ref.read(historyFilterProvider.notifier);
+    return SizedBox(
+      height: 38,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        children: [
+          _TagFilterChip(
+            label: 'Tutte',
+            selected: filter.tag == null,
+            onTap: () => notifier.state = filter.copyWith(clearTag: true),
+          ),
+          for (final tag in SessionTag.values) ...[
+            const SizedBox(width: 8),
+            _TagFilterChip(
+              label: tag.label,
+              selected: filter.tag == tag,
+              onTap: () => notifier.state = filter.copyWith(tag: tag),
+            ),
+          ],
         ],
       ),
-      body: Column(
-        children: [
-          _FilterSummaryBar(filter: filter, ref: ref),
-          const Divider(height: 1),
-          Expanded(
-            child: sessions.when(
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (e, _) => Center(child: Text('Errore: $e')),
-              data: (list) => list.isEmpty
-                  ? const _EmptyState()
-                  : _HistoryBody(sessions: list),
+    );
+  }
+}
+
+class _TagFilterChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  const _TagFilterChip({required this.label, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
+    return Material(
+      color: selected ? t.primary : t.tonal,
+      shape: const StadiumBorder(),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          child: Center(
+            child: Text(
+              label,
+              style: text.labelLarge?.copyWith(
+                color: selected ? t.onPrimary : t.dim,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+              ),
             ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -365,57 +443,6 @@ class _BackupMenuState extends ConsumerState<_BackupMenu> {
   }
 }
 
-/// Riga compatta a una sola linea che riassume il filtro attivo e fa da
-/// trigger per il pannello [_FilterSheet]. Sostituisce le due righe di chip
-/// sempre visibili che rubavano spazio verticale in cima allo storico: ora i
-/// controlli vivono in un bottom sheet, qui resta solo il contesto ("cosa sto
-/// guardando") in forma minimale e on-brand con le card della pagina.
-class _FilterSummaryBar extends StatelessWidget {
-  final HistoryFilter filter;
-  final WidgetRef ref;
-  const _FilterSummaryBar({required this.filter, required this.ref});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final tagLabel = filter.tag?.label ?? 'Tutti i tipi';
-    final summary = '${filter.label} · $tagLabel';
-    // Default = ultimi 30 gg, tutti i tipi: quando il filtro è "non default"
-    // accendiamo l'icona col colore primario per segnalare che una vista
-    // ristretta è attiva (evita di chiedersi "perché vedo poche sessioni?").
-    final isFiltered = filter.days != 30 || filter.tag != null;
-    final accent = isFiltered ? scheme.primary : scheme.onSurfaceVariant;
-
-    return InkWell(
-      onTap: () => _showFilterSheet(context, ref),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        child: Row(
-          children: [
-            Icon(Icons.tune, size: 18, color: accent),
-            const SizedBox(width: 10),
-            Text('Filtri',
-                style: theme.textTheme.titleSmall
-                    ?.copyWith(color: scheme.onSurface)),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                summary,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.end,
-                style: theme.textTheme.bodyMedium
-                    ?.copyWith(color: scheme.onSurfaceVariant),
-              ),
-            ),
-            Icon(Icons.expand_more, size: 20, color: scheme.onSurfaceVariant),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 void _showFilterSheet(BuildContext context, WidgetRef ref) {
   showModalBottomSheet<void>(
     context: context,
@@ -653,31 +680,41 @@ class _EmptyState extends StatelessWidget {
       );
 }
 
-/// Corpo dello Storico = il REGISTRO: elenco cronologico (newest-first) delle
-/// sessioni, filtrabile e con backup. Le viste aggregate/analitiche (trend
-/// lnRMSSD, media settimanale, distribuzione, coerenza nel training, HRV per
-/// contesto, impatto abitudini) vivono nel cruscotto "Andamento HRV" (rotta
-/// /hrv), raggiungibile dalla card "Stato generale HRV" in home.
+/// Corpo dello Storico = il REGISTRO: due statistiche di riepilogo + elenco
+/// cronologico (newest-first) delle sessioni. Le viste aggregate (trend
+/// lnRMSSD, distribuzione, coerenza nel training, impatto abitudini) vivono nel
+/// cruscotto "Andamento HRV" (rotta /hrv).
 class _HistoryBody extends StatelessWidget {
   final List<Session> sessions;
   const _HistoryBody({required this.sessions});
 
   @override
   Widget build(BuildContext context) {
-    // I grafici riflettono la lista GIÀ filtrata (periodo + tag): filtrando
-    // "Stress" vedi il trend del solo stress. Il trend vuole ordine
-    // cronologico (vecchie → recenti); il provider restituisce newest-first.
-    final chrono = sessions.reversed.toList();
+    final scored = sessions.where((s) => s.metrics.hrvScore > 0).toList();
+    final avgScore = scored.isEmpty
+        ? null
+        : scored.map((s) => s.metrics.hrvScore).reduce((a, b) => a + b) / scored.length;
+
     return ListView(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
       children: [
-        if (chrono.length >= 3) ...[
-          LnRmssdTrendCard(sessions: chrono),
-          const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(child: StatTile(value: '${sessions.length}', label: 'sessioni')),
+            const SizedBox(width: 12),
+            Expanded(
+              child: StatTile(
+                value: avgScore == null ? '--' : avgScore.round().toString(),
+                label: 'HRV medio',
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        for (final s in sessions) ...[
+          _SessionTile(session: s),
+          const SizedBox(height: 10),
         ],
-        HrvHistogram(sessions: sessions),
-        const SizedBox(height: 8),
-        for (final s in sessions) _SessionTile(session: s),
       ],
     );
   }
@@ -689,65 +726,73 @@ class _SessionTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final df = DateFormat('dd MMM • HH:mm');
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
     final id = session.id;
     final m = session.metrics;
-    final qColor = qualityColor(m.percentArtifactual);
-    final accent = tagColor(session.tag);
+    final local = session.startedAt.toLocal();
+    final day = _cap(DateFormat('EEE', 'it_IT').format(local));
+    final date = DateFormat('d MMM', 'it_IT').format(local);
+    final coh = m.coherenceRatio;
+    final subtitle = coh > 0
+        ? '${session.duration.inMinutes} min · coerenza ${coh.toStringAsFixed(1).replaceAll('.', ',')}'
+        : '${session.duration.inMinutes} min';
 
-    return Card(
-      // Striscia accent a sinistra del colore-tag: a colpo d'occhio distingue
-      // i contesti nella lista (un post-workout non si confonde con un morning).
-      clipBehavior: Clip.antiAlias,
-      child: Container(
-        decoration: BoxDecoration(
-          border: Border(left: BorderSide(color: accent, width: 4)),
-        ),
-        child: ListTile(
-          leading: CircleAvatar(
-            backgroundColor: scheme.primaryContainer,
-            child: Icon(switch (session.kind) {
-              SessionKind.assessment => Icons.tune,
-              SessionKind.training => Icons.self_improvement,
-              SessionKind.reading => Icons.wb_sunny_outlined,
-              SessionKind.freestyle => Icons.air,
-            }),
+    return AppCard(
+      onTap: id == null ? null : () => context.push('/history/session/$id'),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 46,
+            child: Column(
+              children: [
+                Text(day, style: text.labelSmall?.copyWith(color: t.faint)),
+                Text(date, style: text.titleSmall),
+              ],
+            ),
           ),
-          title: Row(
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _TagPill(tag: session.tag),
+                const SizedBox(height: 6),
+                Text(subtitle, style: text.bodySmall?.copyWith(color: t.faint)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Column(
             children: [
-              Expanded(
-                child: Text(
-                  '${session.tag.label} • '
-                  '${session.pattern.breathsPerMinute.toStringAsFixed(1)} bpm',
-                ),
-              ),
-              // Pallino qualità segnale: verde/ambra/rosso dalla % artefatti.
-              Container(
-                width: 10,
-                height: 10,
-                decoration:
-                    BoxDecoration(color: qColor, shape: BoxShape.circle),
-              ),
+              Text(m.hrvScore.toStringAsFixed(0),
+                  style: text.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+              Text('HRV', style: text.labelSmall?.copyWith(color: t.faint, letterSpacing: 0.5)),
             ],
           ),
-          subtitle: Text(
-            '${df.format(session.startedAt.toLocal())} • '
-            '${session.duration.inMinutes} min\n'
-            'Score ${m.hrvScore.toStringAsFixed(0)} • '
-            'RMSSD ${m.rmssdMs.toStringAsFixed(0)} • '
-            'SDNN ${m.sdnnMs.toStringAsFixed(0)}\n'
-            // Hint qualità: confidenza + % artefatti, così sessioni rumorose
-            // o a bassa affidabilità sono leggibili senza aprire il dettaglio.
-            'Affidabilità ${m.confidence.label} • '
-            'artefatti ${m.percentArtifactual.toStringAsFixed(0)}%',
-          ),
-          isThreeLine: true,
-          trailing: id == null ? null : const Icon(Icons.chevron_right),
-          onTap:
-              id == null ? null : () => context.push('/history/session/$id'),
-        ),
+        ],
+      ),
+    );
+  }
+
+  static String _cap(String s) => s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
+}
+
+/// Pill del tag colorata col colore categoriale stabile ([tagColor]).
+class _TagPill extends StatelessWidget {
+  final SessionTag tag;
+  const _TagPill({required this.tag});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = tagColor(tag);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+      decoration: BoxDecoration(color: c.withValues(alpha: 0.16), borderRadius: BorderRadius.circular(999)),
+      child: Text(
+        tag.label,
+        style: Theme.of(context).textTheme.labelMedium?.copyWith(color: c, fontWeight: FontWeight.w600),
       ),
     );
   }

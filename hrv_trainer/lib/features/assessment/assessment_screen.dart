@@ -2,7 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/theme/app_tokens.dart';
 import '../../shared/connect_iq/widgets/watch_readiness_gate.dart';
+import '../../shared/hrv/breathing_pacer.dart';
+import '../../shared/hrv/session_models.dart';
+import '../../shared/ui/ui.dart';
 import '../pacer/state/pacer_controller.dart';
 import '../pacer/widgets/breathing_orb.dart';
 import 'state/assessment_controller.dart';
@@ -19,18 +23,17 @@ class _AssessmentScreenState extends ConsumerState<AssessmentScreen>
   @override
   Widget build(BuildContext context) {
     final st = ref.watch(assessmentControllerProvider);
-    final tick = ref.watch(pacerControllerProvider);
-    final theme = Theme.of(context);
 
     ref.listen<AssessmentState>(assessmentControllerProvider, (prev, next) {
-      // Il pacer (orb) parte quando inizia davvero la scansione — cioè al primo
-      // battito — non al tap su "Avvia": così l'utente non respira a vuoto
-      // mentre si aspetta l'orologio.
       final wasScanning = prev?.phase == AssessmentPhase.scanning;
       if (!wasScanning && next.phase == AssessmentPhase.scanning) {
         ref.read(pacerControllerProvider.notifier).start();
       }
-      // Assessment annullato per assenza di dati dall'orologio.
+      if (next.phase != AssessmentPhase.scanning &&
+          next.phase != AssessmentPhase.baseline &&
+          (prev?.phase == AssessmentPhase.scanning || prev?.phase == AssessmentPhase.baseline)) {
+        ref.read(pacerControllerProvider.notifier).pause();
+      }
       if (next.abortedNoData && (prev == null || !prev.abortedNoData)) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -45,178 +48,337 @@ class _AssessmentScreenState extends ConsumerState<AssessmentScreen>
     });
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Assessment Frequenza di Risonanza')),
-      body: switch (st.phase) {
-        AssessmentPhase.idle => _buildIntro(context),
-        AssessmentPhase.waiting => _buildWaiting(),
-        AssessmentPhase.baseline => _buildScanning(theme, tick, st),
-        AssessmentPhase.scanning => _buildScanning(theme, tick, st),
-        AssessmentPhase.completed => _buildResult(context, st),
-      },
-    );
-  }
-
-  /// In attesa del primo battito dopo l'avvio: la scansione non parte finché
-  /// l'orologio non misura davvero. Se entro il timeout non arriva nulla, il
-  /// controller annulla con errore.
-  Widget _buildWaiting() {
-    return SafeArea(
-      child: WatchWaitingView(
-        onCancel: () async {
-          await ref.read(assessmentControllerProvider.notifier).cancel();
-          // Usa il context dello State (non un parametro) così il guard
-          // `mounted` è coerente con il context usato per la navigazione.
-          if (mounted && context.canPop()) context.pop();
+      body: SafeArea(
+        child: switch (st.phase) {
+          AssessmentPhase.idle => _buildIntro(context),
+          AssessmentPhase.waiting => _buildWaiting(),
+          AssessmentPhase.baseline => _buildScanning(st),
+          AssessmentPhase.scanning => _buildScanning(st),
+          AssessmentPhase.completed => _buildResult(context, st),
         },
       ),
     );
   }
 
-  Widget _buildIntro(BuildContext context) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Come funziona', style: theme.textTheme.headlineSmall),
-          const SizedBox(height: 12),
-          const Text(
-            'Respirerai per ~2.5 minuti a ciascuna di queste frequenze '
-            'decrescenti: 6.5 → 6.0 → 5.5 → 5.0 → 4.5 respiri/min.\n\n'
-            'Segui il cerchio che si espande (inspira) e si contrae (espira) '
-            'in modo fluido, addominale, senza pause. Non forzare la profondità.\n\n'
-            'Al termine l\'app individuerà la tua frequenza di risonanza personale: '
-            'quella in cui l\'oscillazione del battito guidata dal respiro (RSA) '
-            'raggiunge l\'ampiezza massima.',
-          ),
-          const Spacer(),
-          FilledButton.icon(
-            icon: const Icon(Icons.play_arrow),
-            label: const Text('Avvia assessment'),
-            onPressed: () async {
-              // Gate di connettività: niente assessment se l'orologio non è
-              // connesso (no più scansione a vuoto). Il pacer parte quando
-              // inizia la scansione (primo battito), via ref.listen.
-              final ready = await ensureWatchReady(context, ref);
-              if (!ready || !mounted) return;
-              await ref.read(assessmentControllerProvider.notifier).start();
+  Widget _buildWaiting() {
+    return Column(
+      children: [
+        const HeaderBar(showBack: false, title: 'Assessment risonanza', centerTitle: true, dense: true),
+        Expanded(
+          child: WatchWaitingView(
+            onCancel: () async {
+              await ref.read(assessmentControllerProvider.notifier).cancel();
+              if (mounted && context.canPop()) context.pop();
             },
           ),
-          const SizedBox(height: 8),
-          OutlinedButton(
-            onPressed: () => context.pop(),
-            child: const Text('Annulla'),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
-  Widget _buildScanning(ThemeData theme, tick, AssessmentState st) {
-    final bpm = st.currentBpm ?? 0;
-    final elapsed = st.elapsedInStep.inSeconds;
-    final total = kStepDurationSec;
-    final stepIdx = st.currentStepIndex;
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            if (st.connectionLost) ...[
-              const WatchConnectionLostBanner(),
-              const SizedBox(height: 8),
+  Widget _buildIntro(BuildContext context) {
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
+    return Column(
+      children: [
+        const HeaderBar(title: 'Assessment della risonanza'),
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+            children: [
+              Text('Come funziona', style: text.titleLarge),
+              const SizedBox(height: 14),
+              AppCard(
+                color: t.tonal,
+                border: Colors.transparent,
+                child: Text(
+                  'Respirerai per ~2,5 minuti a ciascuna di queste frequenze '
+                  'decrescenti: 6,5 → 6,0 → 5,5 → 5,0 → 4,5 respiri/min.\n\n'
+                  'Segui il cerchio che si espande (inspira) e si contrae (espira) '
+                  'in modo fluido e addominale, senza pause. Non forzare la profondità.\n\n'
+                  'Al termine l\'app individua la tua frequenza di risonanza personale: '
+                  'quella in cui l\'oscillazione del battito guidata dal respiro (RSA) '
+                  'raggiunge l\'ampiezza massima.',
+                  style: text.bodyMedium?.copyWith(height: 1.5),
+                ),
+              ),
             ],
-            LinearProgressIndicator(value: elapsed / total),
-            const SizedBox(height: 8),
-            Text(
-              'Step ${stepIdx + 1}/${kAssessmentBpmSteps.length} • '
-              '${bpm.toStringAsFixed(1)} bpm',
-              style: theme.textTheme.titleMedium,
-            ),
-            const Spacer(),
-            BreathingOrb(
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 14),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  icon: const Icon(Icons.play_arrow),
+                  label: const Text('Avvia assessment'),
+                  onPressed: () async {
+                    final ready = await ensureWatchReady(context, ref);
+                    if (!ready || !mounted) return;
+                    await ref.read(assessmentControllerProvider.notifier).start();
+                  },
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextButton(onPressed: () => context.pop(), child: const Text('Annulla')),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildScanning(AssessmentState st) {
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
+    final tick = ref.watch(pacerControllerProvider);
+    final bpm = st.currentBpm ?? 0;
+    final orbSize = (MediaQuery.sizeOf(context).width - 120).clamp(180.0, 250.0);
+
+    return Column(
+      children: [
+        const HeaderBar(showBack: false, title: 'Assessment risonanza', centerTitle: true, dense: true),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
+          child: Column(
+            children: [
+              if (st.connectionLost) ...[
+                const WatchConnectionLostBanner(),
+                const SizedBox(height: 10),
+              ],
+              _StepProgress(
+                total: kAssessmentBpmSteps.length,
+                filled: st.currentStepIndex < 0 ? 0 : st.currentStepIndex,
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Ritmo ${st.currentStepIndex + 1}/${kAssessmentBpmSteps.length} · '
+                '${bpm.toStringAsFixed(1).replaceAll('.', ',')} respiri/min',
+                style: text.titleMedium,
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: Center(
+            child: BreathingOrb(
               amplitude: tick.amplitude,
               phase: tick.phase,
               phaseProgress: tick.progress,
-              inhaleColor: theme.colorScheme.primary,
-              exhaleColor: theme.colorScheme.secondary,
+              inhaleColor: t.inhale,
+              exhaleColor: t.exhale,
+              size: orbSize,
             ),
-            const Spacer(),
-            Text(
-              'Campioni raccolti: ${st.currentWindow.length}',
-              style: theme.textTheme.labelMedium,
-            ),
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              icon: const Icon(Icons.stop_circle_outlined),
-              label: const Text('Annulla'),
-              onPressed: () async {
-                await ref.read(assessmentControllerProvider.notifier).cancel();
-              },
-            ),
-          ],
+          ),
         ),
-      ),
+        Text('Campioni raccolti: ${st.currentWindow.length}',
+            style: text.labelMedium?.copyWith(color: t.faint)),
+        const SizedBox(height: 12),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 14),
+          child: OutlinedButton.icon(
+            icon: const Icon(Icons.stop, size: 20),
+            label: const Text('Annulla'),
+            onPressed: () => ref.read(assessmentControllerProvider.notifier).cancel(),
+          ),
+        ),
+      ],
     );
   }
 
   Widget _buildResult(BuildContext context, AssessmentState st) {
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
     final r = st.result;
-    final theme = Theme.of(context);
     if (r == null) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.all(20),
-      child: ListView(
-        children: [
-          Card(
-            color: theme.colorScheme.primaryContainer,
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'La tua Frequenza di Risonanza',
-                    style: theme.textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    r.resonanceBpm == null
-                        ? '—'
-                        : '${r.resonanceBpm!.toStringAsFixed(1)} respiri/min',
-                    style: theme.textTheme.displaySmall,
-                  ),
-                  const SizedBox(height: 4),
-                  if (r.rationale != null)
-                    Text(r.rationale!, style: theme.textTheme.bodyMedium),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Text('Dettaglio step', style: theme.textTheme.titleMedium),
-          const SizedBox(height: 8),
-          ...r.steps.map(
-            (s) => Card(
-              child: ListTile(
-                title: Text('${s.bpm.toStringAsFixed(1)} bpm'),
-                subtitle: Text(
-                  'RSA ${s.metrics.peakToTroughMs.toStringAsFixed(0)} ms p-v • '
-                  'SDNN ${s.metrics.sdnnMs.toStringAsFixed(0)} ms • '
-                  'LF peak ${s.metrics.lfPeakHz.toStringAsFixed(3)} Hz',
+    final bpm = r.resonanceBpm;
+    final bpmStr = bpm == null ? '—' : bpm.toStringAsFixed(1).replaceAll('.', ',');
+    final hzStr = bpm == null ? '' : (bpm / 60).toStringAsFixed(2).replaceAll('.', ',');
+
+    return Column(
+      children: [
+        const HeaderBar(title: 'Assessment della risonanza'),
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+            children: [
+              _StepProgress(total: r.steps.length, filled: r.steps.length),
+              const SizedBox(height: 18),
+              AppCard(
+                color: t.primaryTonal,
+                border: Colors.transparent,
+                padding: const EdgeInsets.all(22),
+                child: Column(
+                  children: [
+                    Text('La tua frequenza di risonanza',
+                        style: text.bodyMedium?.copyWith(color: t.dim)),
+                    const SizedBox(height: 6),
+                    Text(bpmStr, style: text.displayLarge?.copyWith(color: t.text, height: 1.05)),
+                    const SizedBox(height: 2),
+                    Text(
+                      bpm == null ? 'dati insufficienti' : 'respiri al minuto · $hzStr Hz',
+                      style: text.bodyMedium?.copyWith(color: t.dim),
+                    ),
+                    if (bpm != null) ...[
+                      const SizedBox(height: 14),
+                      Pill(tone: PillTone.good, icon: Icons.check_circle, label: 'coerenza massima qui'),
+                    ],
+                  ],
                 ),
-                trailing: s.bpm == r.resonanceBpm
-                    ? const Icon(Icons.star, color: Colors.amber)
-                    : null,
+              ),
+              if (r.steps.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                AppCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Oscillazione respiratoria per ritmo', style: text.titleSmall),
+                      const SizedBox(height: 2),
+                      Text('ampiezza RSA picco-valle · respiri / min',
+                          style: text.bodySmall?.copyWith(color: t.faint)),
+                      const SizedBox(height: 16),
+                      _RateBars(steps: r.steps, resonanceBpm: bpm),
+                    ],
+                  ),
+                ),
+              ],
+              const SizedBox(height: 16),
+              Text(
+                'A questo ritmo il sistema cuore-respiro entra in fase: l\'ampiezza '
+                'dell\'onda RSA è massima. Usalo come passo predefinito del pacer.',
+                style: text.bodyMedium?.copyWith(color: t.dim, height: 1.5),
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 14),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (bpm != null)
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    icon: const Icon(Icons.check),
+                    label: Text('Imposta $bpmStr come pacer predefinito'),
+                    onPressed: () => _setAsPacer(context, bpm),
+                  ),
+                ),
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: () => ref.read(assessmentControllerProvider.notifier).cancel(),
+                child: const Text('Ripeti l\'assessment'),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _setAsPacer(BuildContext context, double bpm) {
+    final prefs = ref.read(pacerPreferencesProvider);
+    ref.read(pacerPreferencesProvider.notifier).state =
+        prefs.copyWith(pattern: BreathingPattern.fromBpm(bpm));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Pacer impostato a ${bpm.toStringAsFixed(1).replaceAll('.', ',')} respiri/min'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+    context.go('/');
+  }
+}
+
+/// Barra di progresso a segmenti (1 per ritmo) + contatore N/M.
+class _StepProgress extends StatelessWidget {
+  final int total;
+  final int filled;
+  const _StepProgress({required this.total, required this.filled});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
+    return Row(
+      children: [
+        for (var i = 0; i < total; i++) ...[
+          Expanded(
+            child: Container(
+              height: 5,
+              decoration: BoxDecoration(
+                color: i < filled ? t.primary : t.tonal2,
+                borderRadius: BorderRadius.circular(3),
               ),
             ),
           ),
-          const SizedBox(height: 24),
-          FilledButton(
-            onPressed: () => context.go('/'),
-            child: const Text('Torna alla home'),
-          ),
+          if (i < total - 1) const SizedBox(width: 6),
+        ],
+        const SizedBox(width: 10),
+        Text('$filled/$total', style: text.labelSmall?.copyWith(color: t.faint)),
+      ],
+    );
+  }
+}
+
+/// Istogramma dell'ampiezza RSA (picco-valle) per ritmo respiratorio scansionato.
+/// Il ritmo di risonanza è evidenziato in primary con la marca "picco".
+class _RateBars extends StatelessWidget {
+  final List<AssessmentStep> steps;
+  final double? resonanceBpm;
+  const _RateBars({required this.steps, required this.resonanceBpm});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
+    final sorted = [...steps]..sort((a, b) => a.bpm.compareTo(b.bpm));
+    var maxP2t = 0.0;
+    for (final s in sorted) {
+      if (s.metrics.peakToTroughMs > maxP2t) maxP2t = s.metrics.peakToTroughMs;
+    }
+    if (maxP2t <= 0) maxP2t = 1;
+
+    const chartH = 128.0;
+    return SizedBox(
+      height: chartH + 16,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          for (final s in sorted)
+            Expanded(
+              child: Builder(builder: (context) {
+                final peak = resonanceBpm != null && (s.bpm - resonanceBpm!).abs() < 0.01;
+                final frac = (s.metrics.peakToTroughMs / maxP2t).clamp(0.0, 1.0);
+                return Column(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    SizedBox(
+                      height: 14,
+                      child: peak
+                          ? Text('picco', style: text.labelSmall?.copyWith(color: t.primary, fontWeight: FontWeight.w700))
+                          : null,
+                    ),
+                    const SizedBox(height: 4),
+                    Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 5),
+                      height: (chartH - 18) * frac + 2,
+                      decoration: BoxDecoration(
+                        color: peak ? t.primary : t.tonal2,
+                        borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(s.bpm.toStringAsFixed(1).replaceAll('.', ','),
+                        style: text.labelSmall?.copyWith(color: t.faint)),
+                  ],
+                );
+              }),
+            ),
         ],
       ),
     );

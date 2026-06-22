@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/theme/app_tokens.dart';
 import '../../shared/hrv/breathing_pacer.dart';
 import '../../shared/hrv/hrv_interpretation.dart';
 import '../../shared/hrv/hrv_metrics.dart';
@@ -13,6 +14,7 @@ import '../../shared/hrv/morning_reading.dart';
 import '../../shared/hrv/rr_interval.dart';
 import '../../shared/hrv/session_models.dart';
 import '../../shared/storage/session_repository.dart';
+import '../../shared/ui/ui.dart';
 import '../home/state/readiness_provider.dart';
 import 'history_screen.dart' show sessionsListProvider;
 
@@ -119,7 +121,7 @@ class _DetailBody extends StatelessWidget {
       children: [
         _HeaderCard(session: s),
         const SizedBox(height: 12),
-        _ScoreCard(metrics: s.metrics),
+        _StatGrid(metrics: s.metrics, pattern: s.pattern),
         const SizedBox(height: 12),
         _MetricsCard(metrics: s.metrics),
         const SizedBox(height: 12),
@@ -230,81 +232,32 @@ class _HeaderCard extends StatelessWidget {
       };
 }
 
-class _ScoreCard extends StatelessWidget {
+/// Riga di 4 tile riassuntive (mockup "Analisi"): HRV · Coerenza · FC media ·
+/// respiri/min.
+class _StatGrid extends StatelessWidget {
   final HrvMetrics metrics;
-  const _ScoreCard({required this.metrics});
+  final BreathingPattern pattern;
+  const _StatGrid({required this.metrics, required this.pattern});
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final score = metrics.hrvScore;
-    final color = _scoreColor(score, theme);
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        child: Row(
-          children: [
-            Container(
-              width: 64,
-              height: 64,
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.15),
-                shape: BoxShape.circle,
-                border: Border.all(color: color, width: 2),
-              ),
-              alignment: Alignment.center,
-              child: Text(
-                score.toStringAsFixed(0),
-                style: theme.textTheme.headlineMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  color: color,
-                ),
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('HRV Score',
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      )),
-                  const SizedBox(height: 2),
-                  Text(_scoreLabel(score),
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: color,
-                        fontWeight: FontWeight.w500,
-                      )),
-                  const SizedBox(height: 4),
-                  Text(
-                    '15.385 × ln(RMSSD)',
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: theme.colorScheme.outline,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+    String c(double v, int d) => v.toStringAsFixed(d).replaceAll('.', ',');
+    return Row(
+      children: [
+        Expanded(child: StatTile(value: metrics.hrvScore.toStringAsFixed(0), label: 'HRV')),
+        const SizedBox(width: 8),
+        Expanded(
+          child: StatTile(
+            value: metrics.coherenceRatio > 0 ? c(metrics.coherenceRatio, 1) : '--',
+            label: 'Coer.',
+          ),
         ),
-      ),
+        const SizedBox(width: 8),
+        Expanded(child: StatTile(value: metrics.meanHrBpm.toStringAsFixed(0), label: 'FC med')),
+        const SizedBox(width: 8),
+        Expanded(child: StatTile(value: c(pattern.breathsPerMinute, 1), label: 'resp.')),
+      ],
     );
-  }
-
-  Color _scoreColor(double s, ThemeData theme) {
-    if (s >= 65) return Colors.green.shade600;
-    if (s >= 50) return Colors.lightGreen.shade600;
-    if (s >= 35) return Colors.amber.shade700;
-    return Colors.red.shade600;
-  }
-
-  String _scoreLabel(double s) {
-    if (s >= 65) return 'Eccellente';
-    if (s >= 50) return 'Buono';
-    if (s >= 35) return 'Discreto';
-    if (s > 0) return 'Basso';
-    return 'Dati insufficienti';
   }
 }
 
@@ -408,8 +361,9 @@ class _MetricsCard extends StatelessWidget {
                 if (hint != null)
                   Text(
                     hint,
-                    style: const TextStyle(
-                        fontSize: 11, color: Colors.grey),
+                    // Faint on-brand neutro, leggibile sia in light che in dark
+                    // (il metodo _row non ha accesso al context per i token).
+                    style: const TextStyle(fontSize: 11, color: Color(0xFF7B908C)),
                   ),
               ],
             ),
@@ -912,12 +866,13 @@ class _QualityCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final t = context.tokens;
     final pct = metrics.percentArtifactual;
     final color = pct < 5
-        ? Colors.green.shade600
+        ? t.good
         : pct < 15
-            ? Colors.amber.shade700
-            : Colors.red.shade600;
+            ? t.warn
+            : t.alert;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -1344,11 +1299,12 @@ class _ConfidencePill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final t = context.tokens;
     final color = switch (confidence) {
-      HrvConfidence.high => Colors.green.shade600,
-      HrvConfidence.moderate => Colors.amber.shade700,
-      HrvConfidence.low => Colors.red.shade600,
-      HrvConfidence.insufficient => Colors.grey.shade600,
+      HrvConfidence.high => t.good,
+      HrvConfidence.moderate => t.warn,
+      HrvConfidence.low => t.alert,
+      HrvConfidence.insufficient => t.faint,
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -1535,7 +1491,7 @@ class _InsightBox extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final color = _levelColor(insight.level, theme);
+    final color = _levelColor(insight.level, context.tokens);
     final icon = _levelIcon(insight.level);
     return Container(
       width: double.infinity,
@@ -1576,12 +1532,12 @@ class _InsightBox extends StatelessWidget {
     );
   }
 
-  Color _levelColor(InsightLevel l, ThemeData theme) => switch (l) {
-        InsightLevel.excellent => Colors.green.shade600,
-        InsightLevel.good => Colors.lightGreen.shade700,
-        InsightLevel.fair => Colors.amber.shade700,
-        InsightLevel.poor => Colors.red.shade600,
-        InsightLevel.neutral => theme.colorScheme.primary,
+  Color _levelColor(InsightLevel l, AppTokens t) => switch (l) {
+        InsightLevel.excellent => t.good,
+        InsightLevel.good => t.good,
+        InsightLevel.fair => t.warn,
+        InsightLevel.poor => t.alert,
+        InsightLevel.neutral => t.primary,
       };
 
   IconData _levelIcon(InsightLevel l) => switch (l) {

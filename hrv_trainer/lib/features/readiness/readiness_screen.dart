@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/theme/app_tokens.dart';
 import '../../shared/hrv/readiness.dart';
 import 'state/readiness_providers.dart';
 
@@ -15,7 +16,7 @@ import 'state/readiness_providers.dart';
 /// card di raccomandazione di carico azionabile (CTA contestuale alla banda),
 /// il grafico trend lnRMSSD con media mobile 7gg e banda SWC, e una legenda.
 ///
-/// È la versione "estesa" della [ReadinessCard] usata in home: stessi colori,
+/// È la versione "estesa" della card di prontezza in home: stessi colori,
 /// stessa semantica (banda/CV/saturazione vagale) ma con più contesto e con
 /// il grafico storico, che nella card compatta non avrebbe spazio.
 class ReadinessScreen extends ConsumerWidget {
@@ -51,20 +52,20 @@ class ReadinessScreen extends ConsumerWidget {
 /// Colore del semaforo coerente con la home card: green→primary,
 /// yellow→arancio, red→error, unknown→outline. Centralizzato qui perché
 /// banda colore è usato in più punti (hero, CTA, dot del grafico).
-Color _bandColor(ThemeData theme, ReadinessBand band) => switch (band) {
-      ReadinessBand.green => theme.colorScheme.primary,
-      ReadinessBand.yellow => Colors.orange.shade700,
-      ReadinessBand.red => theme.colorScheme.error,
-      ReadinessBand.unknown => theme.colorScheme.outline,
+Color _bandColor(AppTokens t, ReadinessBand band) => switch (band) {
+      ReadinessBand.green => t.good,
+      ReadinessBand.yellow => t.warn,
+      ReadinessBand.red => t.alert,
+      ReadinessBand.unknown => t.faint,
     };
 
 /// Stessa palette sobria della home per la riga CV: neutro quando stabile,
 /// ambra/rosso al crescere dell'instabilità.
-Color _cvColor(ThemeData theme, CvStability s) => switch (s) {
-      CvStability.stable => theme.colorScheme.onSurfaceVariant,
-      CvStability.moderate => Colors.orange.shade700,
-      CvStability.unstable => theme.colorScheme.error,
-      CvStability.unknown => theme.colorScheme.onSurfaceVariant,
+Color _cvColor(AppTokens t, CvStability s) => switch (s) {
+      CvStability.stable => t.dim,
+      CvStability.moderate => t.warn,
+      CvStability.unstable => t.alert,
+      CvStability.unknown => t.dim,
     };
 
 /// z-score formattato con segno e suffisso σ (es. '-1.2σ', '+0.4σ').
@@ -82,7 +83,7 @@ class _HeroCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final color = _bandColor(theme, readiness.band);
+    final color = _bandColor(context.tokens, readiness.band);
     final isUnknown = readiness.band == ReadinessBand.unknown;
 
     return Card(
@@ -197,7 +198,7 @@ class _CvRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final color = _cvColor(theme, readiness.cvStability);
+    final color = _cvColor(context.tokens, readiness.cvStability);
     return Row(
       children: [
         Icon(Icons.show_chart, size: 14, color: color),
@@ -264,7 +265,7 @@ class _RecommendationCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final color = _bandColor(theme, readiness.band);
+    final color = _bandColor(context.tokens, readiness.band);
     final advice = readiness.advice;
 
     return Card(
@@ -455,6 +456,7 @@ class _TrendChartArea extends StatelessWidget {
     }
 
     final scheme = theme.colorScheme;
+    final t = context.tokens;
     final df = DateFormat('dd/MM');
 
     // Spot serie principale (lnRMSSD giornaliero) e media mobile 7gg.
@@ -616,7 +618,7 @@ class _TrendChartArea extends StatelessWidget {
                     i >= 0 && i < points.length && points[i].hasContextFlags;
                 return FlDotCirclePainter(
                   radius: flagged ? 4 : 3,
-                  color: flagged ? Colors.orange.shade700 : scheme.primary,
+                  color: flagged ? t.warn : scheme.primary,
                   strokeWidth: flagged ? 1.5 : 0,
                   strokeColor: scheme.surface,
                 );
@@ -726,7 +728,7 @@ class _LegendCard extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             _LegendRow(
-              swatch: _DotSwatch(color: Colors.orange.shade700),
+              swatch: _DotSwatch(color: context.tokens.warn),
               label: 'Giorno con note di contesto',
               hint: 'Alcol, malattia, stress o sonno scarso segnalati al '
                   'check-in: utile per spiegare un outlier.',

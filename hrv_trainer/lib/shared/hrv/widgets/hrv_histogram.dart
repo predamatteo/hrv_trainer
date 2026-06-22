@@ -1,6 +1,8 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 
+import '../../../core/theme/app_tokens.dart';
+import '../../ui/ui.dart';
 import '../session_models.dart';
 
 /// Istogramma della distribuzione di HRV score (0-100) sulle sessioni
@@ -19,6 +21,7 @@ class HrvHistogram extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final t = context.tokens;
     if (sessions.isEmpty) {
       return const SizedBox.shrink();
     }
@@ -31,10 +34,8 @@ class HrvHistogram extends StatelessWidget {
     }
     final maxCount = buckets.reduce((a, b) => a > b ? a : b);
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
+    return AppCard(
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -42,7 +43,7 @@ class HrvHistogram extends StatelessWidget {
                 Expanded(child: Text(title, style: theme.textTheme.titleMedium)),
                 Text(
                   '${sessions.length} sessioni',
-                  style: theme.textTheme.labelSmall,
+                  style: theme.textTheme.labelSmall?.copyWith(color: t.faint),
                 ),
               ],
             ),
@@ -75,7 +76,8 @@ class HrvHistogram extends StatelessWidget {
                           if (idx % 2 != 0) return const SizedBox.shrink();
                           return Text(
                             '${idx * 10}',
-                            style: theme.textTheme.labelSmall,
+                            style: theme.textTheme.labelSmall
+                                ?.copyWith(color: t.faint),
                           );
                         },
                       ),
@@ -88,7 +90,7 @@ class HrvHistogram extends StatelessWidget {
                         barRods: [
                           BarChartRodData(
                             toY: buckets[i].toDouble(),
-                            color: theme.colorScheme.primary,
+                            color: t.primary,
                             width: 14,
                             borderRadius: BorderRadius.circular(3),
                           ),
@@ -99,7 +101,6 @@ class HrvHistogram extends StatelessWidget {
               ),
             ),
           ],
-        ),
       ),
     );
   }

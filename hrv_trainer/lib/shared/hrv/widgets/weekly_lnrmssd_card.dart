@@ -4,6 +4,8 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../../../core/theme/app_tokens.dart';
+import '../../ui/ui.dart';
 import '../session_chart_utils.dart';
 import '../session_models.dart';
 
@@ -23,7 +25,7 @@ class WeeklyLnRmssdCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
+    final t = context.tokens;
 
     final weeks = _aggregateByIsoWeek(sessions);
     if (weeks.length < 2) return const SizedBox.shrink();
@@ -33,10 +35,8 @@ class WeeklyLnRmssdCard extends StatelessWidget {
     final df = DateFormat('dd/MM');
     final int labelStep = (weeks.length / 6).ceil().clamp(1, weeks.length);
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
+    return AppCard(
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -46,7 +46,7 @@ class WeeklyLnRmssdCard extends StatelessWidget {
                       style: theme.textTheme.titleMedium),
                 ),
                 Text('${weeks.length} settimane',
-                    style: theme.textTheme.labelSmall),
+                    style: theme.textTheme.labelSmall?.copyWith(color: t.faint)),
               ],
             ),
             const SizedBox(height: 12),
@@ -59,7 +59,7 @@ class WeeklyLnRmssdCard extends StatelessWidget {
                   show: true,
                   drawVerticalLine: false,
                   getDrawingHorizontalLine: (_) => FlLine(
-                    color: scheme.outlineVariant.withValues(alpha: 0.4),
+                    color: t.grid,
                     strokeWidth: 0.5,
                   ),
                 ),
@@ -74,8 +74,8 @@ class WeeklyLnRmssdCard extends StatelessWidget {
                       showTitles: true,
                       reservedSize: 30,
                       getTitlesWidget: (v, _) => Text(
-                        v.toStringAsFixed(1),
-                        style: theme.textTheme.labelSmall,
+                        v.toStringAsFixed(1).replaceAll('.', ','),
+                        style: theme.textTheme.labelSmall?.copyWith(color: t.faint),
                       ),
                     ),
                   ),
@@ -93,7 +93,7 @@ class WeeklyLnRmssdCard extends StatelessWidget {
                           padding: const EdgeInsets.only(top: 4),
                           child: Text(
                             df.format(weeks[i].weekStart),
-                            style: theme.textTheme.labelSmall,
+                            style: theme.textTheme.labelSmall?.copyWith(color: t.faint),
                           ),
                         );
                       },
@@ -108,9 +108,9 @@ class WeeklyLnRmssdCard extends StatelessWidget {
                       final w = weeks[group.x];
                       return BarTooltipItem(
                         'Sett. ${df.format(w.weekStart)}\n'
-                        'lnRMSSD medio ${w.meanLn.toStringAsFixed(2)}\n'
+                        'lnRMSSD medio ${w.meanLn.toStringAsFixed(2).replaceAll('.', ',')}\n'
                         '${w.count} sessioni',
-                        TextStyle(color: scheme.onInverseSurface),
+                        TextStyle(color: t.onPrimary),
                       );
                     },
                   ),
@@ -122,7 +122,7 @@ class WeeklyLnRmssdCard extends StatelessWidget {
                       barRods: [
                         BarChartRodData(
                           toY: weeks[i].meanLn,
-                          color: scheme.primary,
+                          color: t.primary,
                           width: 14,
                           borderRadius: BorderRadius.circular(3),
                         ),
@@ -135,11 +135,9 @@ class WeeklyLnRmssdCard extends StatelessWidget {
             Text(
               'Ogni barra = media lnRMSSD della settimana; '
               'tocca per il numero di sessioni.',
-              style:
-                  theme.textTheme.labelSmall?.copyWith(color: scheme.outline),
+              style: theme.textTheme.labelSmall?.copyWith(color: t.faint),
             ),
           ],
-        ),
       ),
     );
   }
