@@ -205,15 +205,26 @@ class RemoteSessionSummary {
         DateTime.now().add(const Duration(days: 1)).millisecondsSinceEpoch;
     final minPlausibleMs = _minPlausible.millisecondsSinceEpoch;
 
-    // Numero massimo di "wraps" da provare. Nel 2026 servono ~410 wrap-around,
-    // ma per essere safe verso futuro (2050+) iteriamo fino a 2000 (≈ 270 anni).
+    // L'overflow perde l'informazione oltre il modulo 2^32 ms (~49.7 giorni):
+    // dentro la finestra plausibile [2020, oggi+1g] (larga ~47 wrap) cadono
+    // PIÙ candidati `raw + k*2^32`, tutti indistinguibili dal solo valore
+    // garbled. Una sessione reale è però sempre nel passato e tipicamente
+    // recente, quindi scegliamo il candidato plausibile più RECENTE (il k
+    // massimo che non supera oggi+1g): è esatto per le sessioni recuperate
+    // entro ~49 giorni dalla loro creazione. La versione precedente ritornava
+    // il candidato più VECCHIO, datando ogni sessione recuperata a inizio 2020.
+    // Limite residuo: una sessione più vecchia di ~49 giorni al momento del
+    // recovery viene sovrastimata di multipli di ~49.7 giorni (irrisolvibile
+    // senza altre info — per questo `pickStartedAt` preferisce `startSec`, che
+    // non va in overflow).
+    DateTime? best;
     for (var k = 0; k < 2000; k++) {
       final candidate = raw + k * twoToThe32;
-      if (candidate > maxPlausibleMs) return null;
+      if (candidate > maxPlausibleMs) break;
       if (candidate >= minPlausibleMs) {
-        return DateTime.fromMillisecondsSinceEpoch(candidate, isUtc: false);
+        best = DateTime.fromMillisecondsSinceEpoch(candidate, isUtc: false);
       }
     }
-    return null;
+    return best;
   }
 }
