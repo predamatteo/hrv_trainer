@@ -360,6 +360,8 @@ internal class RealCiqBackend(
 
         override fun onSdkShutDown() {
             sdkReady = false
+            // SDK spento: non possiamo più assumere che l'app sul watch giri.
+            lastWatchActivityMs = 0L
             onEvent(mapOf("type" to "STATE", "v" to "DISCONNECTED"))
         }
     }
@@ -393,10 +395,18 @@ internal class RealCiqBackend(
         if (first != null) {
             registerDeviceEvents(first)
             registerAppEvents(first)
+            if (first.status != IQDevice.IQDeviceStatus.CONNECTED) {
+                // Device noto ma non connesso al refresh (tipico al resume): la
+                // finestra "app sicuramente in esecuzione" non è affidabile, va
+                // azzerata altrimenti il prossimo start() salterebbe
+                // openApplication su un watch irraggiungibile. Vedi deviceEvent.
+                lastWatchActivityMs = 0L
+            }
             // Emettiamo lo stato REALE del device (non un READY incondizionato):
             // knownDevices può contenere un watch accoppiato ma NON connesso.
             emitDeviceState(first.status, describeDevice(first))
         } else {
+            lastWatchActivityMs = 0L
             onEvent(mapOf("type" to "STATE", "v" to "NO_DEVICE", "backend" to "real"))
         }
     }
@@ -441,12 +451,24 @@ internal class RealCiqBackend(
         try {
             connectIq.registerForDeviceEvents(dev) { d, status ->
                 Log.i(GarminCiqBridge.TAG, "deviceEvent ${d?.friendlyName} status=${status?.name}")
-                if (status == IQDevice.IQDeviceStatus.CONNECTED) {
-                    // Watch tornato raggiungibile dopo un drop BT: riaggancia il
-                    // handle e ri-registra gli app-events (idempotente) così gli
-                    // HR_SAMPLE riprendono a fluire senza riavviare l'app.
-                    device = dev
-                    registerAppEvents(dev)
+                when (status) {
+                    IQDevice.IQDeviceStatus.CONNECTED -> {
+                        // Watch tornato raggiungibile dopo un drop BT: riaggancia
+                        // il handle e ri-registra gli app-events (idempotente)
+                        // così gli HR_SAMPLE riprendono a fluire senza riavviare.
+                        device = dev
+                        registerAppEvents(dev)
+                    }
+                    IQDevice.IQDeviceStatus.NOT_CONNECTED,
+                    IQDevice.IQDeviceStatus.NOT_PAIRED -> {
+                        // Device non più raggiungibile: la finestra assume-running
+                        // è ora stale. Azzerarla forza openApplication al prossimo
+                        // start() — l'unico modo di risvegliare l'app sul watch.
+                        // Senza, START_SESSION cadrebbe nel vuoto e il phone
+                        // abortirebbe a 35s con "nessun dato" pur col watch acceso.
+                        lastWatchActivityMs = 0L
+                    }
+                    else -> {} // UNKNOWN / null: transitorio, non tocchiamo nulla.
                 }
                 emitDeviceState(status, describeDevice(dev))
             }
