@@ -33,6 +33,10 @@ hrv_watch_ciq/bin/
 hrv_watch_ciq/.jungle_cache
 hrv_watch_ciq/keys/*.der
 hrv_watch_ciq/keys/*.pem
+# Artefatti di build da CLI (monkeyc -o ... nella root del progetto watch)
+hrv_watch_ciq/*.prg
+hrv_watch_ciq/*.prg.debug.xml
+hrv_watch_ciq/*.mir
 
 # === Connect IQ Mobile SDK estratto ===
 # Licenza proprietaria Garmin: fuori dal repo.
