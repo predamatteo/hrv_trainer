@@ -302,14 +302,24 @@ class _MetricsCard extends StatelessWidget {
                   hint: 'Banda 0.04-0.15 Hz'),
               _row('LF power',
                   metrics.lfPower.toStringAsFixed(1)),
+              // HF, LF/HF: oltre Nyquist su RR stimati da HR 1 Hz → mostrati
+              // come n/d invece di numeri con falsa precisione (vedi hfReliable).
               _row('HF peak',
-                  '${metrics.hfPeakHz.toStringAsFixed(3)} Hz',
-                  hint: 'Banda 0.15-0.40 Hz'),
+                  metrics.hfReliable
+                      ? '${metrics.hfPeakHz.toStringAsFixed(3)} Hz'
+                      : 'n/d',
+                  hint: metrics.hfReliable
+                      ? 'Banda 0.15-0.40 Hz'
+                      : 'Oltre Nyquist su stima 1 Hz'),
               _row('HF power',
-                  metrics.hfPower.toStringAsFixed(1)),
+                  metrics.hfReliable ? metrics.hfPower.toStringAsFixed(1) : 'n/d'),
               _row('LF/HF ratio',
-                  metrics.lfHfRatio.toStringAsFixed(2),
-                  hint: 'Bilancio simpato/vagale'),
+                  metrics.hfReliable
+                      ? metrics.lfHfRatio.toStringAsFixed(2)
+                      : 'n/d',
+                  hint: metrics.hfReliable
+                      ? 'Bilancio simpato/vagale'
+                      : 'Non interpretabile (HF oltre Nyquist)'),
               _row('Total power',
                   metrics.totalPower.toStringAsFixed(1)),
             ]),
@@ -944,7 +954,11 @@ class _SpectrumCard extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             // Primario: bilancio LF/HF in unità normalizzate (zero ricalcolo).
-            _LfHfBar(lfNu: metrics.lfNu, hfNu: metrics.hfNu),
+            _LfHfBar(
+              lfNu: metrics.lfNu,
+              hfNu: metrics.hfNu,
+              hfReliable: metrics.hfReliable,
+            ),
             const SizedBox(height: 16),
             if (!hasSpectrum)
               Padding(
@@ -1112,12 +1126,40 @@ class _SpectrumCard extends StatelessWidget {
 class _LfHfBar extends StatelessWidget {
   final double lfNu;
   final double hfNu;
-  const _LfHfBar({required this.lfNu, required this.hfNu});
+
+  /// Quando false (sorgente stimata da HR 1 Hz) la quota HF è rumore di
+  /// quantizzazione: invece del bilancio mostriamo una nota onesta.
+  final bool hfReliable;
+  const _LfHfBar({
+    required this.lfNu,
+    required this.hfNu,
+    required this.hfReliable,
+  });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    if (!hfReliable) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline, size: 16, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              'Bilancio LF / HF non disponibile: su RR stimati da HR a ~1 Hz '
+              'la banda HF (0.15–0.40 Hz) è oltre Nyquist. Il picco LF a '
+              '~0.1 Hz resta valido (vedi periodogramma sotto).',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+                height: 1.4,
+              ),
+            ),
+          ),
+        ],
+      );
+    }
     // Difensivo: se entrambi nulli (spettro vuoto) mostriamo 50/50 neutro.
     final total = lfNu + hfNu;
     final lfFrac = total > 0 ? lfNu / total : 0.5;
@@ -1417,9 +1459,11 @@ class _EstimationDisclaimer extends StatelessWidget {
               'Valori stimati da HR a ~1 Hz: l\'Instinct Solar 2X non '
               'espone RR battito-battito reali. RMSSD/SDNN così calcolati '
               'tendono a essere 5-15% sotto la "Salute Istantanea" Garmin '
-              'nativa, che usa il PPG ad alta frequenza. Utili per '
-              'monitorare il proprio trend, non per confronti clinici '
-              'inter-individuo.',
+              'nativa, che usa il PPG ad alta frequenza. La banda HF '
+              '(0.15–0.40 Hz) è oltre Nyquist: HF, LF/HF e il loro bilancio '
+              'non sono interpretabili (mostrati come n/d); il picco LF a '
+              '~0.1 Hz resta valido. Utili per monitorare il proprio trend, '
+              'non per confronti clinici inter-individuo.',
               style: theme.textTheme.labelSmall?.copyWith(
                 color: scheme.onSurfaceVariant,
                 height: 1.4,

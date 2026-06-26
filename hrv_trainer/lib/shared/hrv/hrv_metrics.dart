@@ -143,6 +143,13 @@ class HrvMetrics {
     confidence: HrvConfidence.insufficient,
   );
 
+  /// La banda HF (0.15-0.40 Hz) è quantitativamente affidabile solo con RR
+  /// battito-battito reali. Su `estimated_from_hr` (HR a ~1 Hz, Instinct 2X)
+  /// HF è oltre Nyquist: hfPeakHz/hfPower/lfHfRatio e le n.u. LF/HF sono
+  /// dominati dal rumore di quantizzazione e non vanno presentati come misurati.
+  /// Il picco LF (~0.1 Hz, respiro) resta invece entro Nyquist e affidabile.
+  bool get hfReliable => rrSource == 'rr_native';
+
   /// HRV score 0-100 dalla sola RMSSD: `15.385 * ln(RMSSD)` clampato.
   /// Sorgente UNICA del punteggio: usata sia in [HrvCalculator.compute] sia
   /// dagli aggregati (es. livello HRV in HrvTrendCalculator) per non
