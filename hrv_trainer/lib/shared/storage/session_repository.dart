@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:developer' as developer;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sqflite/sqflite.dart';
@@ -185,6 +186,7 @@ class SessionRepository {
   }
 
   Session _rowToSession(Map<String, Object?> row) {
+    final id = row['id'] as int;
     final tagName = row['tag'] as String? ?? 'general';
     // morning_meta_json può mancare (colonna assente in DB pre-v3 letti da un
     // backup, o NULL per sessioni non-morning): in quei casi morning resta null.
@@ -198,24 +200,54 @@ class SessionRepository {
         morning = null;
       }
     }
+    // pattern_json / metrics_json sono JSON liberi e possono arrivare corrotti
+    // da un backup editato a mano (l'export incoraggia esplicitamente
+    // l'ispezione manuale). Una singola riga avvelenata NON deve far crashare
+    // l'intera listSessions() → Storico e Home rotti in modo permanente: si
+    // ripiega su un default e si logga, stesso principio già usato per morning.
     return Session(
-      id: row['id'] as int,
-      kind: SessionKind.values.firstWhere((k) => k.name == row['kind']),
+      id: id,
+      kind: SessionKind.values
+          .firstWhere((k) => k.name == row['kind'], orElse: () {
+        developer.log('kind sconosciuto "${row['kind']}" per sessione $id',
+            name: 'SessionRepository');
+        return SessionKind.training;
+      }),
       tag: SessionTag.values
           .firstWhere((t) => t.name == tagName, orElse: () => SessionTag.general),
       startedAt: DateTime.fromMillisecondsSinceEpoch(row['started_at'] as int),
       endedAt: row['ended_at'] == null
           ? null
           : DateTime.fromMillisecondsSinceEpoch(row['ended_at'] as int),
-      pattern: BreathingPattern.fromJson(
-        jsonDecode(row['pattern_json'] as String) as Map<String, dynamic>,
-      ),
-      metrics: HrvMetrics.fromJson(
-        jsonDecode(row['metrics_json'] as String) as Map<String, dynamic>,
-      ),
+      pattern: _decodePattern(row['pattern_json'], id),
+      metrics: _decodeMetrics(row['metrics_json'], id),
       notes: row['notes'] as String?,
       morning: morning,
     );
+  }
+
+  BreathingPattern _decodePattern(Object? raw, int sessionId) {
+    try {
+      return BreathingPattern.fromJson(
+        jsonDecode(raw as String) as Map<String, dynamic>,
+      );
+    } catch (e) {
+      developer.log('pattern_json corrotto per sessione $sessionId: $e',
+          name: 'SessionRepository');
+      return BreathingPattern.resonance6bpm;
+    }
+  }
+
+  HrvMetrics _decodeMetrics(Object? raw, int sessionId) {
+    try {
+      return HrvMetrics.fromJson(
+        jsonDecode(raw as String) as Map<String, dynamic>,
+      );
+    } catch (e) {
+      developer.log('metrics_json corrotto per sessione $sessionId: $e',
+          name: 'SessionRepository');
+      return HrvMetrics.empty;
+    }
   }
 
   Future<int> saveAssessment(ResonanceAssessment a) async {
@@ -310,10 +342,11 @@ class SessionRepository {
     };
   }
 
-  /// Esito di un import: quanti record nuovi e quanti scartati per dedup.
-  /// `error` non null se il JSON è invalido o di schema sconosciuto.
-  /// Niente eccezioni propagate al chiamante per non doverlo wrappare in
-  /// try/catch in UI: l'errore è un dato come gli altri.
+  /// Esito di un import: quanti record nuovi, quanti scartati per dedup e
+  /// quanti scartati perché malformati. `error` non null se il JSON è invalido
+  /// o di schema sconosciuto. Niente eccezioni propagate al chiamante: anche un
+  /// backup editato a mano con record corrotti viene gestito record-per-record
+  /// (validati prima dell'insert) senza mai abortire l'import né inquinare il DB.
   Future<ImportResult> importAll(Map<String, dynamic> data) async {
     final v = data['schemaVersion'];
     if (v is! int) {
@@ -330,14 +363,37 @@ class SessionRepository {
 
     var sessImported = 0;
     var sessSkipped = 0;
+    var sessInvalid = 0;
     var assImported = 0;
     var assSkipped = 0;
+    var assInvalid = 0;
 
     final db = await _db;
     await db.transaction((txn) async {
       for (final raw in sessions) {
-        final s = raw as Map<String, dynamic>;
-        final startedAt = s['startedAt'] as int;
+        // Validazione difensiva prima di scrivere: un backup può essere editato
+        // a mano (l'export lo incoraggia). Un record con campi mancanti/di tipo
+        // errato o con pattern/metrics JSON non decodificabile viene SCARTATO e
+        // contato, mai inserito — altrimenti una riga avvelenata romperebbe in
+        // lettura tutta listSessions() (Storico e Home) senza recovery in-app.
+        if (raw is! Map) {
+          sessInvalid++;
+          continue;
+        }
+        final s = raw.cast<String, dynamic>();
+        final startedAt = s['startedAt'];
+        final kind = s['kind'];
+        final patternJson = s['patternJson'];
+        final metricsJson = s['metricsJson'];
+        if (startedAt is! int ||
+            kind is! String ||
+            patternJson is! String ||
+            metricsJson is! String ||
+            !_isDecodableSession(patternJson, metricsJson)) {
+          sessInvalid++;
+          continue;
+        }
+
         // Dedup su startedAt: chiave naturale di una sessione (un utente non
         // ne avvia due nello stesso ms). Stesso criterio di
         // existsSessionStartedAt() per coerenza con il flusso watch.
@@ -354,26 +410,32 @@ class SessionRepository {
         }
 
         final id = await txn.insert('sessions', {
-          'kind': s['kind'],
-          'tag': s['tag'] ?? 'general',
+          'kind': kind,
+          'tag': s['tag'] is String ? s['tag'] : 'general',
           'started_at': startedAt,
-          'ended_at': s['endedAt'],
-          'pattern_json': s['patternJson'],
-          'metrics_json': s['metricsJson'],
-          'notes': s['notes'],
+          'ended_at': s['endedAt'] is int ? s['endedAt'] : null,
+          'pattern_json': patternJson,
+          'metrics_json': metricsJson,
+          'notes': s['notes'] is String ? s['notes'] : null,
           // null per backup v1 (campo assente) → import retro-compatibile.
-          'morning_meta_json': s['morningMetaJson'],
+          'morning_meta_json':
+              s['morningMetaJson'] is String ? s['morningMetaJson'] : null,
         });
 
-        final rr = (s['rrSamples'] as List?) ?? const [];
-        if (rr.isNotEmpty) {
+        final rrRaw = s['rrSamples'];
+        if (rrRaw is List && rrRaw.isNotEmpty) {
           final batch = txn.batch();
-          for (final r in rr) {
-            final rm = r as Map<String, dynamic>;
+          for (final r in rrRaw) {
+            if (r is! Map) continue;
+            final t = r['t'];
+            final ms = r['ms'];
+            // t/ms vengono ri-letti come int (getSessionRrSamples li casta a
+            // int): scartare i campioni non interi evita un crash in lettura.
+            if (t is! int || ms is! int) continue;
             batch.insert('rr_samples', {
               'session_id': id,
-              't': rm['t'],
-              'ms': rm['ms'],
+              't': t,
+              'ms': ms,
             });
           }
           await batch.commit(noResult: true);
@@ -382,8 +444,16 @@ class SessionRepository {
       }
 
       for (final raw in assessments) {
-        final a = raw as Map<String, dynamic>;
-        final takenAt = a['takenAt'] as int;
+        if (raw is! Map) {
+          assInvalid++;
+          continue;
+        }
+        final a = raw.cast<String, dynamic>();
+        final takenAt = a['takenAt'];
+        if (takenAt is! int) {
+          assInvalid++;
+          continue;
+        }
         final dup = await txn.query(
           'assessments',
           columns: ['id'],
@@ -397,9 +467,9 @@ class SessionRepository {
         }
         await txn.insert('assessments', {
           'taken_at': takenAt,
-          'resonance_bpm': a['resonanceBpm'],
-          'rationale': a['rationale'],
-          'steps_json': a['stepsJson'],
+          'resonance_bpm': a['resonanceBpm'] is num ? a['resonanceBpm'] : null,
+          'rationale': a['rationale'] is String ? a['rationale'] : null,
+          'steps_json': a['stepsJson'] is String ? a['stepsJson'] : null,
         });
         assImported++;
       }
@@ -408,30 +478,50 @@ class SessionRepository {
     return ImportResult(
       sessionsImported: sessImported,
       sessionsSkipped: sessSkipped,
+      sessionsInvalid: sessInvalid,
       assessmentsImported: assImported,
       assessmentsSkipped: assSkipped,
+      assessmentsInvalid: assInvalid,
     );
+  }
+
+  /// Prova a decodificare pattern e metrics di una sessione importata: se uno
+  /// dei due JSON non è valido il record va scartato, non scritto nel DB.
+  bool _isDecodableSession(String patternJson, String metricsJson) {
+    try {
+      BreathingPattern.fromJson(
+          jsonDecode(patternJson) as Map<String, dynamic>);
+      HrvMetrics.fromJson(jsonDecode(metricsJson) as Map<String, dynamic>);
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 }
 
 class ImportResult {
   final int sessionsImported;
   final int sessionsSkipped;
+  final int sessionsInvalid;
   final int assessmentsImported;
   final int assessmentsSkipped;
+  final int assessmentsInvalid;
   final String? error;
 
   const ImportResult({
     this.sessionsImported = 0,
     this.sessionsSkipped = 0,
+    this.sessionsInvalid = 0,
     this.assessmentsImported = 0,
     this.assessmentsSkipped = 0,
+    this.assessmentsInvalid = 0,
     this.error,
   });
 
   bool get isError => error != null;
   int get totalImported => sessionsImported + assessmentsImported;
   int get totalSkipped => sessionsSkipped + assessmentsSkipped;
+  int get totalInvalid => sessionsInvalid + assessmentsInvalid;
 }
 
 final sessionRepositoryProvider =

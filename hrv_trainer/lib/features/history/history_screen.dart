@@ -381,12 +381,15 @@ class _BackupMenuState extends ConsumerState<_BackupMenu> {
       ref.invalidate(sessionsListProvider);
       ref.invalidate(readinessProvider);
 
+      final invalidNote = result.totalInvalid > 0
+          ? ' Scartate (corrotte): ${result.totalInvalid}.'
+          : '';
       messenger.showSnackBar(SnackBar(
         duration: const Duration(seconds: 5),
         content: Text(
           'Importate: ${result.sessionsImported} sessioni, '
           '${result.assessmentsImported} assessment. '
-          'Saltate (già presenti): ${result.totalSkipped}.',
+          'Saltate (già presenti): ${result.totalSkipped}.$invalidNote',
         ),
       ));
     } catch (e) {
