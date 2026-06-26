@@ -107,7 +107,10 @@ class AppTokens extends ThemeExtension<AppTokens> {
     tonal2: Color(0xFFD6E3DF),
     text: Color(0xFF102A2D),
     dim: Color(0xFF4E6562),
-    faint: Color(0xFF849A96),
+    // faint: scurito da #849A96 (~2.98:1, sotto AA) a ~4.86:1 su surface bianco,
+    // così le label non selezionate della bottom-nav e i micro-testi (unità,
+    // hint) passano WCAG 1.4.3 restando più tenui di `dim`.
+    faint: Color(0xFF5F7672),
     primary: Color(0xFF0F6F7A),
     onPrimary: Color(0xFFFFFFFF),
     primaryTonal: Color(0xFFCFE6E6),
@@ -133,7 +136,9 @@ class AppTokens extends ThemeExtension<AppTokens> {
     tonal2: Color(0xFF1C383F),
     text: Color(0xFFE8F0EE),
     dim: Color(0xFF9CB2AF),
-    faint: Color(0xFF6B8480),
+    // faint: schiarito da #6B8480 (~4.10:1, borderline) a ~4.63:1 su surface
+    // scuro per passare AA, restando più tenue di `dim`.
+    faint: Color(0xFF748D89),
     primary: Color(0xFF54B9C4),
     onPrimary: Color(0xFF04222A),
     primaryTonal: Color(0xFF123A40),
