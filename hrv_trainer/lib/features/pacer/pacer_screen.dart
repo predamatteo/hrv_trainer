@@ -57,7 +57,10 @@ class _PacerScreenState extends ConsumerState<PacerScreen> {
     final t = context.tokens;
     final text = Theme.of(context).textTheme;
     final prefs = ref.watch(pacerPreferencesProvider);
-    final tick = ref.watch(pacerControllerProvider);
+    // NB: il tick del pacer (20 Hz) NON viene osservato qui — lo guardano solo
+    // _OrbView e _ElapsedLabel, così l'intero Scaffold (header, pill, switch,
+    // bottoni) non si ricostruisce 20 volte al secondo su una schermata che può
+    // restare aperta a lungo (nessun auto-stop) con wakelock attivo.
     final orbSize = (MediaQuery.sizeOf(context).width - 90).clamp(200.0, 280.0);
 
     return Scaffold(
@@ -79,10 +82,7 @@ class _PacerScreenState extends ConsumerState<PacerScreen> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    BreathingOrb(
-                      amplitude: tick.amplitude,
-                      phase: tick.phase,
-                      phaseProgress: tick.progress,
+                    _OrbView(
                       size: orbSize,
                       inhaleColor: t.inhale,
                       exhaleColor: t.exhale,
@@ -93,7 +93,7 @@ class _PacerScreenState extends ConsumerState<PacerScreen> {
                       style: text.bodyMedium?.copyWith(color: t.dim),
                     ),
                     const SizedBox(height: 6),
-                    Text(_fmt(tick.elapsedSec), style: text.displaySmall),
+                    const _ElapsedLabel(),
                     const SizedBox(height: 30),
                     _RatePills(
                       current: prefs.pattern.breathsPerMinute,
@@ -159,10 +159,51 @@ class _PacerScreenState extends ConsumerState<PacerScreen> {
     );
   }
 
-  String _fmt(double sec) {
-    final m = (sec ~/ 60).toString().padLeft(2, '0');
-    final s = (sec.toInt() % 60).toString().padLeft(2, '0');
-    return '$m:$s';
+}
+
+String _fmtElapsed(int totalSec) {
+  final m = (totalSec ~/ 60).toString().padLeft(2, '0');
+  final s = (totalSec % 60).toString().padLeft(2, '0');
+  return '$m:$s';
+}
+
+/// Solo l'orb osserva il tick del pacer (20 Hz): isolarlo qui evita di
+/// ricostruire il resto della schermata ad ogni frame. Stesso pattern di
+/// _OrbView in training_screen.dart.
+class _OrbView extends ConsumerWidget {
+  final double size;
+  final Color inhaleColor;
+  final Color exhaleColor;
+  const _OrbView({
+    required this.size,
+    required this.inhaleColor,
+    required this.exhaleColor,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final tick = ref.watch(pacerControllerProvider);
+    return BreathingOrb(
+      amplitude: tick.amplitude,
+      phase: tick.phase,
+      phaseProgress: tick.progress,
+      size: size,
+      inhaleColor: inhaleColor,
+      exhaleColor: exhaleColor,
+    );
+  }
+}
+
+/// Cronometro: con `select` sul secondo intero si ricostruisce a ~1 Hz, non a
+/// 20 Hz come il tick grezzo (il display mostra solo mm:ss).
+class _ElapsedLabel extends ConsumerWidget {
+  const _ElapsedLabel();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final sec = ref.watch(
+        pacerControllerProvider.select((t) => t.elapsedSec.toInt()));
+    return Text(_fmtElapsed(sec), style: Theme.of(context).textTheme.displaySmall);
   }
 }
 
