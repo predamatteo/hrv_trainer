@@ -617,13 +617,23 @@ class _SelChip extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-          child: Text(
-            label,
-            style: text.labelLarge?.copyWith(
-              color: fg,
-              fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+        // minHeight 48 → area tappabile conforme a Material/WCAG 2.5.5: il
+        // check-in mattutino è usato da appena svegli, target piccoli (~35dp
+        // prima) e ravvicinati erano facili da mancare. Center widthFactor 1
+        // mantiene la larghezza a contenuto dentro il Wrap.
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 48),
+          child: Center(
+            widthFactor: 1,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+              child: Text(
+                label,
+                style: text.labelLarge?.copyWith(
+                  color: fg,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                ),
+              ),
             ),
           ),
         ),
