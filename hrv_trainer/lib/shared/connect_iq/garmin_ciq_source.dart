@@ -47,6 +47,20 @@ class GarminCiqSource implements HeartRateSource {
   // comunque la sessione precedente lato watch — vedi HrvTrainerApp.mc).
   int _opGen = 0;
 
+  // Baseline della latenza di consegna UNA-TANTUM dello START (d_down): la
+  // stimiamo come minimo di `gap = roundTrip - elapsedMs` sui primi battiti,
+  // poi la CONGELIAMO (il min continuava a calare lungo la sessione facendo
+  // derivare lentamente l'orb in avanti). Reset ad ogni start().
+  int? _minGapMs;
+  int _baselineBeats = 0;
+  static const _kBaselineBeats = 20;
+  // Floor di d_up che min(gap) ha incluso: la latenza upstream non e' mai 0,
+  // quindi (gap - minGap) sottostima d_up. Reintegrato come costante e
+  // calibrato sul device (Instinct 2X / CIQ) così l'orb del telefono cade sul
+  // pacer real-time dell'orologio. Tarato a mano: 0/220 -> orb in ritardo,
+  // 650 -> orb e vibrazione del watch finiscono il ciclo insieme.
+  static const _kUpstreamFloorMs = 650;
+
   StreamSubscription? _eventSub;
   HrSourceState _state = HrSourceState.disconnected;
 
@@ -106,13 +120,21 @@ class GarminCiqSource implements HeartRateSource {
         int? oneWayMs;
         if (elapsedRaw != null && phoneTxMs != null) {
           final roundTripMs = DateTime.now().millisecondsSinceEpoch - phoneTxMs;
-          // Clamp >= 0 perché clock skew o jitter possono produrre stime
-          // negative su round-trip molto piccoli. /2 perché il roundTrip
-          // include sia send sia recv: assumiamo simmetria.
-          oneWayMs = ((roundTripMs - elapsedRaw) / 2).round().clamp(
-                0,
-                roundTripMs,
-              );
+          // gap = roundTrip - elapsedMs = d_down (consegna una-tantum dello
+          // START, ~secondi dopo openApplication) + d_up (latenza del singolo
+          // battito, ~centinaia di ms). La vecchia stima gap/2 (simmetria
+          // assunta) era dominata dal grande d_down e ancorava l'orb ~1s AVANTI
+          // al watch. d_down è costante: lo isoliamo come min(gap) e lo
+          // sottraiamo, ottenendo la sola latenza upstream con cui estrapolare
+          // pacerRaw all'istante reale del watch. Mantiene la compensazione del
+          // jitter (il termine `now` resta nel gap per-battito).
+          final gap = roundTripMs - elapsedRaw;
+          if (_baselineBeats < _kBaselineBeats) {
+            _baselineBeats++;
+            if (_minGapMs == null || gap < _minGapMs!) _minGapMs = gap;
+          }
+          oneWayMs =
+              (gap - (_minGapMs ?? gap) + _kUpstreamFloorMs).clamp(0, 3000);
         }
         final watchElapsedMs = (elapsedRaw != null && oneWayMs != null)
             ? elapsedRaw + oneWayMs
@@ -185,6 +207,9 @@ class GarminCiqSource implements HeartRateSource {
     // Nuova sessione: invalida eventuali stop/forceStop in volo della
     // precedente, così un loro fallback tardivo non manda STOP_SESSION qui.
     _opGen++;
+    // Ricomincia la stima del baseline d_down per la sessione.
+    _minGapMs = null;
+    _baselineBeats = 0;
     _setState(HrSourceState.connecting);
     final args = <String, Object?>{'hz': 4};
     if (pattern != null) {
