@@ -7,13 +7,26 @@ import 'package:sqflite/sqflite.dart';
 class AppDatabase {
   static Database? _db;
 
+  /// Override per i test: una databaseFactory (es. sqflite_common_ffi) + path
+  /// (file temporaneo o :memory:). Quando settati, instance() apre il DB di
+  /// test con lo stesso schema/migrazioni dell'app invece del DB reale.
+  static DatabaseFactory? testFactory;
+  static String? testPath;
+
   static Future<Database> instance() async {
     if (_db != null) return _db!;
-    final dir = await getApplicationDocumentsDirectory();
-    final path = p.join(dir.path, 'hrv_trainer.db');
-    _db = await openDatabase(
+    final factory = testFactory;
+    final String path;
+    if (factory != null) {
+      path = testPath ?? inMemoryDatabasePath;
+    } else {
+      final dir = await getApplicationDocumentsDirectory();
+      path = p.join(dir.path, 'hrv_trainer.db');
+    }
+    _db = await (factory ?? databaseFactory).openDatabase(
       path,
-      version: 3,
+      options: OpenDatabaseOptions(
+        version: 3,
       onConfigure: (db) async {
         // SQLite tiene le FOREIGN KEY disabilitate di default: senza questo
         // PRAGMA la `ON DELETE CASCADE` di rr_samples e' decorativa (la cascata
@@ -82,8 +95,17 @@ class AppDatabase {
           'CREATE INDEX idx_rr_session ON rr_samples(session_id, t)',
         );
       },
+      ),
     );
     return _db!;
+  }
+
+  /// Azzera singleton e override (da chiamare in tearDown dei test).
+  static Future<void> resetForTest() async {
+    await _db?.close();
+    _db = null;
+    testFactory = null;
+    testPath = null;
   }
 
   /// Aggiunge una colonna solo se non esiste gia'. SQLite non supporta
