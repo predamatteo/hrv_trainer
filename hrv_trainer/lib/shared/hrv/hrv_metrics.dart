@@ -283,7 +283,6 @@ class HrvCalculator {
     final pnn50 = 100.0 * nn50 / (ms.length - 1);
 
     final meanHr = 60000.0 / mean;
-    final p2t = _meanPeakToTrough(ms);
     final durationSec = ms.reduce((a, b) => a + b) / 1000.0;
 
     // Frequency-domain: periodogramma di Lomb-Scargle sull'intera banda
@@ -294,6 +293,14 @@ class HrvCalculator {
     final hfPower = _bandPower(spec, 0.15, 0.40);
     final lfPeakHz = _peakFreq(spec, 0.04, 0.15);
     final hfPeakHz = _peakFreq(spec, 0.15, 0.40);
+    // Ampiezza RSA (peak-to-trough, ms) = 2x l'ampiezza della sinusoide al picco
+    // LF (least-squares). Isola l'onda respiratoria ~0.1 Hz dal rumore di
+    // quantizzazione battito-battito che corrompeva il conteggio degli estremi
+    // grezzi su RR stimati da HR intero. Fallback al metodo a estremi se non
+    // c'è un picco LF (spettro assente, < 20 campioni).
+    final p2t = lfPeakHz > 0
+        ? 2 * _oscillationAmplitudeAt(rr, lfPeakHz)
+        : _meanPeakToTrough(ms);
     final totalPower = lfPower + hfPower;
     final lfHfRatio = hfPower > 0 ? lfPower / hfPower : 0.0;
     final lhSum = lfPower + hfPower;
@@ -426,6 +433,42 @@ class HrvCalculator {
     final mp = peaks.reduce((a, b) => a + b) / peaks.length;
     final mt = troughs.reduce((a, b) => a + b) / troughs.length;
     return mp - mt;
+  }
+
+  /// Ampiezza (ms) della miglior sinusoide alla frequenza [freqHz], stimata via
+  /// least-squares con lo stesso schema del Lomb-Scargle (tau-shift per il
+  /// campionamento non uniforme degli RR). A differenza degli estremi grezzi
+  /// isola la componente respiratoria (~0.1 Hz) dal rumore di quantizzazione,
+  /// che vive a frequenze più alte. peak-to-trough RSA = 2 * questa ampiezza.
+  static double _oscillationAmplitudeAt(List<RrInterval> rr, double freqHz) {
+    if (rr.length < 6 || freqHz <= 0) return 0;
+    final t0 = rr.first.timestamp.millisecondsSinceEpoch / 1000.0;
+    final ts = rr
+        .map((e) => e.timestamp.millisecondsSinceEpoch / 1000.0 - t0)
+        .toList(growable: false);
+    final vals = rr.map((e) => e.ms.toDouble()).toList(growable: false);
+    final mean = vals.reduce((a, b) => a + b) / vals.length;
+    final omega = 2 * math.pi * freqHz;
+    var sSin2 = 0.0, sCos2 = 0.0;
+    for (final t in ts) {
+      sSin2 += math.sin(2 * omega * t);
+      sCos2 += math.cos(2 * omega * t);
+    }
+    final tau = math.atan2(sSin2, sCos2) / (2 * omega);
+    var sCos = 0.0, sSin = 0.0, cc = 0.0, ss = 0.0;
+    for (var k = 0; k < ts.length; k++) {
+      final a = omega * (ts[k] - tau);
+      final c = math.cos(a);
+      final s = math.sin(a);
+      final v = vals[k] - mean;
+      sCos += v * c;
+      sSin += v * s;
+      cc += c * c;
+      ss += s * s;
+    }
+    final aCoef = cc > 0 ? sCos / cc : 0.0;
+    final bCoef = ss > 0 ? sSin / ss : 0.0;
+    return math.sqrt(aCoef * aCoef + bCoef * bCoef);
   }
 
   /// Periodogramma di Lomb-Scargle (adatto a serie campionate in modo non

@@ -48,6 +48,33 @@ void main() {
       expect(m.totalPower, greaterThan(0));
     });
 
+    test('ampiezza RSA band-limited robusta su RR quantizzati (HR intero 1 Hz)',
+        () {
+      // Caso reale Instinct 2X: bpm INTERO che oscilla a 0.1 Hz, RR = 60000~/bpm.
+      // La quantizzazione a gradino genera decine di micro-estremi spuri che
+      // corrompevano il vecchio peak-to-trough sugli estremi grezzi; la stima
+      // band-limited al picco LF deve recuperare l'ampiezza respiratoria reale.
+      final rr = <RrInterval>[];
+      var t = 0.0;
+      final start = DateTime(2020);
+      while (t < 180) {
+        final bpm = (60 + 5 * math.sin(2 * math.pi * 0.1 * t)).round();
+        final ms = 60000 ~/ bpm; // stessa divisione intera del watch
+        rr.add(RrInterval(
+          timestamp: start.add(Duration(milliseconds: (t * 1000).round())),
+          ms: ms,
+        ));
+        t += ms / 1000.0;
+      }
+      final m = HrvCalculator.compute(rr); // default: estimated_from_hr
+      // Il picco respiratorio resta entro Nyquist ed è individuato.
+      expect(m.lfPeakHz, closeTo(0.1, 0.02));
+      // bpm 55-65 → RR ~923-1091 ms → ampiezza ~84 ms → p2t ~160 ms. La stima
+      // band-limited lo recupera invece di collassare sul rumore (≈0) o gonfiare.
+      expect(m.peakToTroughMs, greaterThan(100));
+      expect(m.peakToTroughMs, lessThan(260));
+    });
+
     test('HRV score formula: 15.385 * ln(RMSSD)', () {
       // RR che produce RMSSD ~= 34 ms (valore tipico adulto): alternato.
       final rr = <RrInterval>[];
