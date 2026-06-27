@@ -139,6 +139,15 @@ class ReadinessCalculator {
   /// z: più lunga = z più stabile rispetto al rumore quotidiano.
   static const int chronicDays = 60;
 
+  /// SD tipica di popolazione del lnRMSSD giorno-su-giorno in soggetti sani:
+  /// prior per stabilizzare il denominatore z quando il baseline è giovane.
+  static const double _lnRmssdPriorSd = 0.15;
+
+  /// Forza del prior in "pseudo-osservazioni": con questi gradi di libertà
+  /// personali il peso personale eguaglia il prior. ~8 → il prior domina sotto
+  /// ~8 letture e sfuma verso la SD personale al crescere di n.
+  static const double _priorStrength = 8;
+
   /// Calcola la readiness usando [history] = sessioni taggate `morning`
   /// ordinate dalla più recente alla più vecchia. La più recente è
   /// considerata la lettura "di oggi"; le precedenti formano il baseline.
@@ -188,7 +197,11 @@ class ReadinessCalculator {
         .map(math.log)
         .toList();
     final meanLn = _mean(lnChronic);
-    final sdLn = _sampleSd(lnChronic, meanLn);
+    // Denominatore z "shrinkato" verso il prior di popolazione: con baseline
+    // giovane la SD campionaria personale è inaffidabile e una SD minuscola
+    // (letture per caso vicine) farebbe esplodere |z|, marcando red una lettura
+    // solo leggermente bassa. Vedi _shrunkLnSd.
+    final sdLn = _shrunkLnSd(_sampleSd(lnChronic, meanLn), lnChronic.length);
     final lnToday =
         today.metrics.rmssdMs > 0 ? math.log(today.metrics.rmssdMs) : meanLn;
     final z = sdLn > 0 ? (lnToday - meanLn) / sdLn : 0.0;
@@ -279,6 +292,18 @@ class ReadinessCalculator {
     final v = xs.map((x) => (x - mean) * (x - mean)).reduce((a, b) => a + b) /
         (xs.length - 1);
     return math.sqrt(v);
+  }
+
+  /// SD del lnRMSSD "shrinkata" verso il prior di popolazione (pooled-variance,
+  /// stile empirical-Bayes), pesata da [_priorStrength] pseudo-osservazioni.
+  /// Con baseline giovane converge al prior; al crescere delle letture converge
+  /// alla SD personale. Sempre > 0 (il prior è > 0), quindi z è sempre definito.
+  static double _shrunkLnSd(double personalSd, int n) {
+    final df = (n - 1).clamp(0, 1 << 30).toDouble();
+    final pooledVar = (df * personalSd * personalSd +
+            _priorStrength * _lnRmssdPriorSd * _lnRmssdPriorSd) /
+        (df + _priorStrength);
+    return math.sqrt(pooledVar);
   }
 
   /// (advice, testo). Guardrail: se la banda è green ma le ultime 3+ mattine

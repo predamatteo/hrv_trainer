@@ -90,6 +90,24 @@ void main() {
       expect(r.band, ReadinessBand.yellow);
       expect(r.direction, AutonomicDirection.parasympatheticLow);
     });
+
+    test('baseline giovane (n=3) ravvicinato: lettura poco bassa non va in red',
+        () {
+      final now = DateTime(2026, 4, 22);
+      // 3 letture di baseline molto vicine (~40 ms): la SD campionaria sarebbe
+      // minuscola e SENZA shrinkage today=35 (~12% sotto) darebbe |z| enorme →
+      // red arbitrario. Con lo shrinkage verso il prior lo z resta ragionevole.
+      final hist = <Session>[
+        _morning(now, 35, 60), // oggi
+        _morning(now.subtract(const Duration(days: 1)), 41, 60),
+        _morning(now.subtract(const Duration(days: 2)), 40, 60),
+        _morning(now.subtract(const Duration(days: 3)), 39, 60),
+      ];
+      final r = ReadinessCalculator.fromHistory(hist);
+      expect(r.baselineDays, 3);
+      expect(r.band, ReadinessBand.yellow);
+      expect(r.band, isNot(ReadinessBand.red));
+    });
   });
 
   group('CV(lnRMSSD)', () {
