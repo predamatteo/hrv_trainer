@@ -19,40 +19,12 @@ class HrvCompute {
         var sdnn = 0;
         var rrOut = [];
 
-        // Gate fisiologico (300-2000 ms) + anti-spike (|delta|>250 ms): scarta
-        // i battiti impossibili o i salti spuri dovuti a HR sample mancanti.
-        var samples = [];
-        if (raw != null) {
-            var prevc = null;
-            for (var c = 0; c < raw.size(); c++) {
-                var v = raw[c];
-                if (v < 300 || v > 2000) { continue; }
-                if (prevc != null && (v - prevc).abs() > 250) { continue; }
-                samples.add(v);
-                prevc = v;
-            }
-        }
-
-        if (samples.size() >= 10) {
-            var n = samples.size();
-            var sum = 0;
-            for (var i = 0; i < n; i++) { sum += samples[i]; }
-            var mean = sum.toFloat() / n;
-
-            var sqSum = 0.0;
-            for (var j = 0; j < n; j++) {
-                var d = samples[j] - mean;
-                sqSum += d * d;
-            }
-            // Sample stdev (n-1) per coerenza con la letteratura HRV.
-            sdnn = Math.sqrt(sqSum / (n - 1)).toNumber();
-
-            var sqDiff = 0.0;
-            for (var k = 1; k < n; k++) {
-                var dk = samples[k] - samples[k - 1];
-                sqDiff += dk * dk;
-            }
-            rmssd = Math.sqrt(sqDiff / (n - 1)).toNumber();
+        // Gate fisiologico + anti-spike + SDNN/RMSSD (n-1) condivisi con il
+        // SESSION_SUMMARY standalone (HrSession.buildSummary): vedi HrvFilter.
+        var samples = HrvFilter.clean(raw);
+        if (samples.size() >= HrvFilter.MIN_SAMPLES) {
+            sdnn = HrvFilter.sdnn(samples);
+            rmssd = HrvFilter.rmssd(samples);
             rrOut = samples;
         }
 

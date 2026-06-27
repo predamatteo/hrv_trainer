@@ -199,39 +199,13 @@ class HrSession {
     hidden function buildSummary(durationMs) {
         var n = mRrList.size();
         var meanHr = (mBpmCount > 0) ? (mBpmSum / mBpmCount).toNumber() : 0;
-        var sdnn = 0;
-        var rmssd = 0;
-        // Gate fisiologico (300-2000 ms) + anti-spike (|delta|>250 ms) PRIMA
-        // delle statistiche: un singolo HR sample droppato/spurio gonfierebbe
-        // RMSSD/SDNN, mostrati standalone e usati come seed lato telefono.
-        var clean = [];
-        var prevc = null;
-        for (var c = 0; c < n; c++) {
-            var v = mRrList[c];
-            if (v < 300 || v > 2000) { continue; }
-            if (prevc != null && (v - prevc).abs() > 250) { continue; }
-            clean.add(v);
-            prevc = v;
-        }
-        var cn = clean.size();
-        if (cn >= 10) {
-            var sum = 0;
-            for (var i = 0; i < cn; i++) { sum += clean[i]; }
-            var mean = sum.toFloat() / cn;
-            var sq = 0.0;
-            for (var j = 0; j < cn; j++) {
-                var d = clean[j] - mean;
-                sq += d * d;
-            }
-            // Sample stdev (n-1) per coerenza con la letteratura HRV.
-            sdnn = Math.sqrt(sq / (cn - 1)).toNumber();
-            var sqd = 0.0;
-            for (var k = 1; k < cn; k++) {
-                var dk = clean[k] - clean[k - 1];
-                sqd += dk * dk;
-            }
-            rmssd = Math.sqrt(sqd / (cn - 1)).toNumber();
-        }
+        // Gate fisiologico (300-2000) + anti-spike (|delta|>250) + SDNN/RMSSD
+        // (sample stdev n-1) condivisi con l'HRV on-demand (HrvCompute): un
+        // singolo HR sample droppato/spurio gonfierebbe RMSSD/SDNN, mostrati
+        // standalone e usati come seed lato telefono. Vedi HrvFilter.
+        var cleaned = HrvFilter.clean(mRrList);
+        var sdnn = HrvFilter.sdnn(cleaned);
+        var rmssd = HrvFilter.rmssd(cleaned);
         // durationMs.toLong() forza somma in 64-bit così endMs non rischia
         // overflow (durationMs è Number ma 1.76e12 + 1.2e6 va calcolato Long).
         var endEpochMs = mStartEpochMs + durationMs.toLong();
