@@ -44,7 +44,7 @@ void main() {
       ]);
       // Tiene vivo il provider autoDispose per tutta la durata del test.
       final keepAlive =
-          container.listen(trainingControllerProvider, (_, __) {});
+          container.listen(trainingControllerProvider, (_, _) {});
 
       final ctrl = container.read(trainingControllerProvider.notifier);
       ctrl.start(BreathingPattern.resonance6bpm, targetDurationSec: 1200);
