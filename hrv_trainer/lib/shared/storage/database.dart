@@ -14,11 +14,25 @@ class AppDatabase {
     _db = await openDatabase(
       path,
       version: 3,
+      onConfigure: (db) async {
+        // SQLite tiene le FOREIGN KEY disabilitate di default: senza questo
+        // PRAGMA la `ON DELETE CASCADE` di rr_samples e' decorativa (la cascata
+        // regge solo perche' deleteSession cancella a mano in transazione).
+        await db.execute('PRAGMA foreign_keys = ON');
+      },
+      onDowngrade: (db, oldV, newV) async {
+        // Apertura di un DB creato da una versione PIU' NUOVA (es. un backup v4
+        // ripristinato via device-transfer/cloud su un'app v3): NON cancelliamo
+        // nulla (sono dati sanitari) e non andiamo in crash-loop. Le migrazioni
+        // sono solo additive, quindi le eventuali colonne extra vengono
+        // semplicemente ignorate dal codice piu' vecchio. La versione viene
+        // riportata a quella corrente; un futuro re-upgrade e' sicuro grazie
+        // agli ADD COLUMN idempotenti in onUpgrade.
+      },
       onUpgrade: (db, oldV, newV) async {
         if (oldV < 2) {
-          await db.execute(
-            "ALTER TABLE sessions ADD COLUMN tag TEXT NOT NULL DEFAULT 'general'",
-          );
+          await _addColumnIfMissing(
+              db, 'sessions', 'tag', "TEXT NOT NULL DEFAULT 'general'");
           await db.execute(
             'CREATE INDEX IF NOT EXISTS idx_sessions_tag ON sessions(tag, started_at DESC)',
           );
@@ -27,9 +41,7 @@ class AppDatabase {
           // Colonna additiva per i metadati Morning Readiness
           // (postura/protocollo/contesto), serializzati come JSON. Migrazione
           // sicura: ADD COLUMN nullable non tocca i dati esistenti.
-          await db.execute(
-            'ALTER TABLE sessions ADD COLUMN morning_meta_json TEXT',
-          );
+          await _addColumnIfMissing(db, 'sessions', 'morning_meta_json', 'TEXT');
         }
       },
       onCreate: (db, v) async {
@@ -72,6 +84,24 @@ class AppDatabase {
       },
     );
     return _db!;
+  }
+
+  /// Aggiunge una colonna solo se non esiste gia'. SQLite non supporta
+  /// `ALTER TABLE ADD COLUMN IF NOT EXISTS`, e un ADD COLUMN su colonna gia'
+  /// presente lancia "duplicate column name". Serve a rendere onUpgrade
+  /// idempotente: dopo un onDowngrade la versione torna indietro ma le colonne
+  /// restano, quindi un successivo re-upgrade non deve fallire.
+  static Future<void> _addColumnIfMissing(
+    Database db,
+    String table,
+    String column,
+    String typeDdl,
+  ) async {
+    final cols = await db.rawQuery('PRAGMA table_info($table)');
+    final exists = cols.any((c) => c['name'] == column);
+    if (!exists) {
+      await db.execute('ALTER TABLE $table ADD COLUMN $column $typeDdl');
+    }
   }
 
   static Future<void> close() async {
