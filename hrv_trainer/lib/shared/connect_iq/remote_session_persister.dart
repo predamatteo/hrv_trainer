@@ -86,6 +86,14 @@ class RemoteSessionPersister {
       name: _logTag,
     );
 
+    if (s.droppedOnWatch > 0) {
+      developer.log(
+        'WARN il watch ha scartato ${s.droppedOnWatch} summary standalone per '
+        'buffer pieno (phone irraggiungibile da troppe sessioni): perdita dati.',
+        name: _logTag,
+      );
+    }
+
     // Sanity check post-recovery: se anche dopo pickStartedAt() il timestamp
     // resta fuori range plausibile, significa che il watch ha mandato dati
     // troppo corrotti per essere recuperati (es. clock del watch resettato

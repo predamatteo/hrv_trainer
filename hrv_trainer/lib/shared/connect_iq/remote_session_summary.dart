@@ -26,6 +26,11 @@ class RemoteSessionSummary {
   /// ritrasmettere lo stesso summary ad ogni flush.
   final int startMsRaw;
 
+  /// Summary standalone scartati dal watch per buffer pieno (PendingStore):
+  /// segnala una perdita dati (il phone era irraggiungibile da troppe sessioni).
+  /// 0 in condizioni normali e sui firmware vecchi che non inviano il campo.
+  final int droppedOnWatch;
+
   const RemoteSessionSummary({
     required this.startedAt,
     required this.endedAt,
@@ -35,6 +40,7 @@ class RemoteSessionSummary {
     required this.samples,
     required this.rrMs,
     required this.startMsRaw,
+    this.droppedOnWatch = 0,
     this.pattern,
   });
 
@@ -83,6 +89,7 @@ class RemoteSessionSummary {
       // ha comunque una chiave da mandare al watch. Il match avverrà
       // sulla coppia che il watch ha effettivamente in PendingStore.
       startMsRaw: startMsRaw ?? (startSec != null ? startSec * 1000 : 0),
+      droppedOnWatch: (j['dropped'] as num?)?.toInt() ?? 0,
     );
   }
 

@@ -256,6 +256,10 @@ class HrSession {
             // non da intervalli battito-battito reali. Il telefono deve
             // marcare le metriche HRV come stima.
             "rrSource" => "estimated_from_hr",
+            // Summary standalone scartati per buffer pieno (phone irraggiungibile
+            // da troppe sessioni): il phone lo logga/avvisa invece di lasciare
+            // la perdita dati silenziosa. 0 sui watch in condizioni normali.
+            "dropped" => PendingStore.droppedCount(),
         };
         if (mPattern != null) {
             summary.put("inhaleMs", mPattern.inhaleMs);

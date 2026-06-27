@@ -164,5 +164,24 @@ void main() {
       expect(rr[1].timestamp, base.add(const Duration(milliseconds: 1620)));
       expect(rr[2].timestamp, base.add(const Duration(milliseconds: 2410)));
     });
+
+    test('parse del campo dropped (perdita summary lato watch)', () {
+      final startSec = DateTime.now()
+              .subtract(const Duration(days: 1))
+              .millisecondsSinceEpoch ~/
+          1000;
+      expect(
+        RemoteSessionSummary.fromJson(
+            {'startSec': startSec, 'rr': const [800], 'dropped': 3})
+            .droppedOnWatch,
+        3,
+      );
+      // Firmware vecchio senza il campo → 0 (back-compat).
+      expect(
+        RemoteSessionSummary.fromJson({'startSec': startSec, 'rr': const [800]})
+            .droppedOnWatch,
+        0,
+      );
+    });
   });
 }

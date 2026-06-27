@@ -13,6 +13,11 @@ using Toybox.System as Sys;
 // drop dei più vecchi (Storage CIQ ha pochi KB di spazio).
 class PendingStore {
     static const KEY = "pendingSummaries";
+    // Contatore persistente di summary scartati per buffer pieno: viaggia nel
+    // prossimo SESSION_SUMMARY così il phone può avvisare di una perdita dati
+    // standalone (prima il drop era silenzioso). Azzerato a ogni ack (= phone
+    // di nuovo raggiungibile, conteggio gia` comunicato).
+    static const DROPPED_KEY = "droppedSummaries";
     static const MAX_PENDING = 5;
 
     // Aggiunge un summary alla coda. Se il cap è raggiunto, scarta il più
@@ -21,11 +26,27 @@ class PendingStore {
         var list = Storage.getValue(KEY);
         if (!(list instanceof Toybox.Lang.Array)) { list = []; }
         list.add(summary);
+        var dropped = 0;
         while (list.size() > MAX_PENDING) {
             list = list.slice(1, list.size());
+            dropped++;
+        }
+        if (dropped > 0) {
+            var prev = Storage.getValue(DROPPED_KEY);
+            if (!(prev instanceof Toybox.Lang.Number)) { prev = 0; }
+            Storage.setValue(DROPPED_KEY, prev + dropped);
+            Sys.println("PendingStore.add: DROPPED " + dropped +
+                " (total " + (prev + dropped) + ") — phone irraggiungibile");
         }
         Storage.setValue(KEY, list);
         Sys.println("PendingStore.add: now size=" + list.size());
+    }
+
+    // Numero di summary scartati dall'ultimo ack (perdita dati standalone).
+    static function droppedCount() {
+        var v = Storage.getValue(DROPPED_KEY);
+        if (!(v instanceof Toybox.Lang.Number)) { return 0; }
+        return v;
     }
 
     // Ritorna la lista corrente (potenzialmente vuota).
@@ -48,6 +69,9 @@ class PendingStore {
             }
         }
         Storage.setValue(KEY, kept);
+        // Phone raggiungibile: azzera il contatore dei droppati (il valore e'
+        // gia` stato comunicato nei SESSION_SUMMARY inviati finora).
+        Storage.setValue(DROPPED_KEY, 0);
         Sys.println("PendingStore.ack startMs=" + startMs + " remaining=" + kept.size());
     }
 
