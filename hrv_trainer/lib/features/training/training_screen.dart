@@ -313,11 +313,15 @@ class _TrainingScreenState extends ConsumerState<TrainingScreen>
   Future<void> _onStart() async {
     final ready = await ensureWatchReady(context, ref);
     if (!ready || !mounted) return;
+    // Aggancia l'orb allo STESSO periodo intero-ms inviato al watch in
+    // START_SESSION: phone e orologio condividono il periodo esatto e l'orb
+    // non scivola di fase ciclo dopo ciclo sui ritmi non interi (fromBpm).
+    final pattern = _pattern.snappedToMs();
     ref.read(pacerPreferencesProvider.notifier).state =
-        ref.read(pacerPreferencesProvider).copyWith(pattern: _pattern);
+        ref.read(pacerPreferencesProvider).copyWith(pattern: pattern);
     await ref
         .read(trainingControllerProvider.notifier)
-        .start(_pattern, targetDurationSec: _durationMin * 60, tag: _tag);
+        .start(pattern, targetDurationSec: _durationMin * 60, tag: _tag);
   }
 
   IconData _tagIcon(SessionTag t) => switch (t) {

@@ -37,6 +37,19 @@ class BreathingPattern {
     return BreathingPattern(inhaleSec: inhale, exhaleSec: exhale);
   }
 
+  /// Pattern con tutte le durate arrotondate al ms intero — IDENTICO a quello
+  /// inviato al watch in START_SESSION (`(durataSec*1000).round()`). Allinea il
+  /// periodo dell'orb del telefono a quello dell'orologio: senza, sui ritmi non
+  /// interi (fromBpm) i due periodi differiscono di frazioni di ms e la fase
+  /// scivola di `t·ΔP/P` ciclo dopo ciclo (il resync allinea il tempo, non la
+  /// fase modulo). No-op sui pattern già interi (es. resonance6bpm).
+  BreathingPattern snappedToMs() => BreathingPattern(
+        inhaleSec: (inhaleSec * 1000).round() / 1000,
+        hold1Sec: (hold1Sec * 1000).round() / 1000,
+        exhaleSec: (exhaleSec * 1000).round() / 1000,
+        hold2Sec: (hold2Sec * 1000).round() / 1000,
+      );
+
   Map<String, dynamic> toJson() => {
         'i': inhaleSec,
         'h1': hold1Sec,
