@@ -211,11 +211,10 @@ Dove l'app **oggi** tradisce queste linee guida. Basato sui gap reali trovati ne
 
 ## 9. Stato di implementazione (branch `feat/ux-roadmap`)
 
-**Fatto:** GAP 1 (onboarding), GAP 2 (il respiro lascia traccia), GAP 3 (`/hrv` riagganciata); e dei medi/bassi: `#6` copy non-atletico, `#7` perché serve l'orologio, `#8` semaforo demotato, `#10` (parziale: spiegazione vista cronica), `#12` rimosso `soundEnabled`, `#14` `EmptyState`/`Callout` condivisi, `#15` hex residui, `#16` Semantics.
+**Fatto:** GAP 1 (onboarding), GAP 2 (il respiro lascia traccia), GAP 3 (`/hrv` riagganciata); e dei medi/bassi: `#5b` confidence esposta sulla lettura del giorno (scelta: respiro spontaneo, baseline intatto), `#6` copy non-atletico, `#7` perché serve l'orologio, `#8` semaforo demotato, `#10` (parziale: spiegazione vista cronica), `#12` rimosso `soundEnabled`, `#14` `EmptyState`/`Callout` condivisi, `#15` hex residui, `#16` Semantics.
 
 ### Backlog (rimandati, non abbandonati)
 
-- **`#5` Lettura mattutina su segnale fragile — DECISIONE APERTA.** L'utente ha scelto "la versione più scientificamente corretta" (pre-respiro guidato 1 min). Attenzione: misurare durante/dopo respiro **guidato** cambia il protocollo da *spontaneo* a *paced* e **rompe la continuità del baseline** (le letture storiche sono spontanee → z-score non confrontabile). Va deciso con l'utente: (a) passare a paced accettando un reset/segmentazione del baseline, oppure (b) tenere spontaneo riducendo la prominenza ed esponendo la confidence. *Da chiarire prima di implementare.*
 - **`#9` Sequenza guidata — in gran parte coperta** dal nuovo onboarding (accompagna respiro → orologio → pratica). Resta eventuale un nudge "inizia da qui / trova la risonanza" in Home per chi salta l'onboarding.
 - **`#10` Glossario/tooltip sui singoli termini** (RMSSD, coerenza, z-score, …): fatto il framing della vista cronica; mancano le info-affordance puntuali sui termini (usare il `Callout`/una "tappable info").
 - **`#11` Dedup `_PracticeTile`/`_PracticeCard`:** marginale — le due card hanno forme volutamente diverse (tile compatta in Home vs card descrittiva in Sessione). Da valutare solo se diverge il design.
