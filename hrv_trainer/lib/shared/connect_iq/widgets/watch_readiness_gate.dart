@@ -95,6 +95,17 @@ class _WatchReadinessSheetState extends ConsumerState<_WatchReadinessSheet> {
               readiness.message,
               style: theme.textTheme.bodyMedium?.copyWith(height: 1.4),
             ),
+            const SizedBox(height: 12),
+            // Perché serve: senza dati dal polso non c'è HRV da misurare. Il
+            // solo respiro guidato (pacer) funziona comunque senza orologio.
+            Text(
+              'L\'orologio misura il battito da cui calcoliamo l\'HRV. Per il '
+              'solo respiro guidato non è necessario.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+                height: 1.4,
+              ),
+            ),
             const SizedBox(height: 24),
             FilledButton.icon(
               icon: connecting
