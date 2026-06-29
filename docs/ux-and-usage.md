@@ -209,4 +209,14 @@ Dove l'app **oggi** tradisce queste linee guida. Basato sui gap reali trovati ne
 
 ---
 
+## 9. Backlog (rimandati)
+
+Voci consapevolmente posticipate (non abbandonate):
+
+- **`#13` Strumentazione del successo — metriche d'uso locali.** Aggiungere metriche **solo on-device** (nessun invio in rete, vincolo CIQ-only): time-to-first-breath, % sessioni watch-less, costanza, ritorno D1/D7, completamento onboarding. Servono a misurare se l'idea di utilizzo funziona davvero. *Rimandato per scelta esplicita (priorità bassa).*
+
+> Convenzione: quando una voce del backlog viene implementata, spostarla nella roadmap §8 come "fatto" o rimuoverla.
+
+---
+
 *Documento vivo: aggiornare i riferimenti di file quando il codice cambia. Le decisioni aperte restano del proprietario.*
