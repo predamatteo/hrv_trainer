@@ -10,6 +10,7 @@ import 'package:hrv_trainer/shared/hrv/breathing_pacer.dart';
 import 'package:hrv_trainer/shared/hrv/session_models.dart';
 import 'package:hrv_trainer/shared/storage/database.dart';
 import 'package:hrv_trainer/shared/storage/session_repository.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
@@ -19,6 +20,9 @@ void main() {
   late ProviderContainer container;
   late SessionRepository repo;
   setUp(() {
+    // Il recorder registra anche la metrica "primo respiro" (#13), che scrive in
+    // SharedPreferences: serve il mock o getInstance lancia in test.
+    SharedPreferences.setMockInitialValues({});
     tmp = Directory.systemTemp.createTempSync('hrv_breath_rec_test');
     AppDatabase.testFactory = databaseFactoryFfi;
     AppDatabase.testPath = '${tmp.path}/test.db';

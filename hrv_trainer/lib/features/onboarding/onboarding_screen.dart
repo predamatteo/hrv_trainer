@@ -9,6 +9,7 @@ import '../../core/theme/app_tokens.dart';
 import '../../shared/notifications/reminder_settings.dart';
 import '../../shared/profile/onboarding_provider.dart';
 import '../../shared/ui/ui.dart';
+import '../../shared/usage/usage_metrics_provider.dart';
 import '../pacer/state/pacer_controller.dart';
 import '../pacer/widgets/breathing_orb.dart';
 
@@ -81,6 +82,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   Future<void> _finish() async {
     if (_finishing) return;
     _finishing = true;
+    // Metrica d'uso locale (#13): onboarding completato.
+    unawaited(ref.read(usageMetricsProvider.notifier).recordOnboardingDone());
     await ref.read(onboardingSeenProvider.notifier).markSeen();
     if (mounted) context.go('/');
   }
@@ -320,6 +323,8 @@ class _BreathStepViewState extends ConsumerState<_BreathStepView> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       ref.read(pacerControllerProvider.notifier).start();
+      // Il respiro dell'onboarding è di norma il primo respiro in assoluto (#13).
+      unawaited(ref.read(usageMetricsProvider.notifier).recordFirstBreath());
     });
     // Countdown a parete (1 Hz): l'orb anima dal tick del pacer, il conto alla
     // rovescia e il completamento li gestiamo qui, indipendenti dalle pause.

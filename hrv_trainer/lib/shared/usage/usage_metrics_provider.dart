@@ -32,14 +32,17 @@ class UsageMetricsStore extends StateNotifier<UsageMetrics> {
     }
   }
 
-  Future<void> _persist() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_key, jsonEncode(state.toJson()));
-  }
+  Future<void> _save(SharedPreferences prefs) =>
+      prefs.setString(_key, jsonEncode(state.toJson()));
 
   /// Registra un'apertura: fissa [UsageMetrics.firstOpenAt] al primo avvio e
   /// aggiunge (dedup) il giorno odierno. Da chiamare all'avvio e al resume.
+  ///
+  /// L'`await` viene PRIMA di mutare lo stato di proposito: `recordOpen` è
+  /// chiamato in `initState`, e mutare un provider durante il build lancia
+  /// `!_dirty`; l'async gap sposta la mutazione fuori dal frame di build.
   Future<void> recordOpen() async {
+    final prefs = await SharedPreferences.getInstance();
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final days = [
@@ -58,19 +61,21 @@ class UsageMetricsStore extends StateNotifier<UsageMetrics> {
       openDays: capped,
       firstOpenAt: state.firstOpenAt ?? now,
     );
-    await _persist();
+    await _save(prefs);
   }
 
   Future<void> recordOnboardingDone() async {
     if (state.onboardingDoneAt != null) return;
+    final prefs = await SharedPreferences.getInstance();
     state = state.copyWith(onboardingDoneAt: DateTime.now());
-    await _persist();
+    await _save(prefs);
   }
 
   Future<void> recordFirstBreath() async {
     if (state.firstBreathAt != null) return;
+    final prefs = await SharedPreferences.getInstance();
     state = state.copyWith(firstBreathAt: DateTime.now());
-    await _persist();
+    await _save(prefs);
   }
 }
 

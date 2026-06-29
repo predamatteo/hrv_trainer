@@ -13,6 +13,7 @@ import 'shared/connect_iq/hr_source_provider.dart';
 import 'shared/connect_iq/remote_session_persister.dart';
 import 'shared/notifications/reminder_settings.dart';
 import 'shared/profile/onboarding_provider.dart';
+import 'shared/usage/usage_metrics_provider.dart';
 
 Future<void> main() async {
   // Necessario: il warm-up dei provider tocca i plugin (timezone,
@@ -56,6 +57,8 @@ class _HrvTrainerAppState extends ConsumerState<HrvTrainerApp>
     // cambio di fuso orario o aggiornamento dell'app). Non-autoDispose →
     // resta vivo per tutta la durata dell'app.
     ref.read(reminderControllerProvider);
+    // Metriche d'uso locali (#13): registra l'apertura (solo on-device).
+    unawaited(ref.read(usageMetricsProvider.notifier).recordOpen());
   }
 
   @override
@@ -89,6 +92,8 @@ class _HrvTrainerAppState extends ConsumerState<HrvTrainerApp>
       // oggi quando l'utente torna in app (es. dopo una sessione completata).
       // No-op se la modalità skip è off.
       unawaited(ref.read(reminderControllerProvider.notifier).refresh());
+      // Registra anche il rientro come apertura del giorno (dedup interno).
+      unawaited(ref.read(usageMetricsProvider.notifier).recordOpen());
     }
   }
 

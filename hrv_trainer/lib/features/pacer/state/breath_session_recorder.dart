@@ -4,6 +4,7 @@ import '../../../shared/hrv/breathing_pacer.dart';
 import '../../../shared/hrv/hrv_metrics.dart';
 import '../../../shared/hrv/session_models.dart';
 import '../../../shared/storage/session_repository.dart';
+import '../../../shared/usage/usage_metrics_provider.dart';
 import '../../history/history_screen.dart' show sessionsListProvider;
 import '../../hrv_dashboard/state/hrv_dashboard_providers.dart';
 
@@ -54,6 +55,9 @@ class BreathSessionRecorder {
     // Storico e cruscotto cronico vedono subito la nuova pratica.
     _ref.invalidate(sessionsListProvider);
     _ref.invalidate(hrvDashboardSessionsProvider);
+    // Metrica d'uso locale (#13): primo respiro per chi salta l'onboarding
+    // (idempotente — non sovrascrive quello eventualmente già registrato lì).
+    await _ref.read(usageMetricsProvider.notifier).recordFirstBreath();
     return id;
   }
 }
