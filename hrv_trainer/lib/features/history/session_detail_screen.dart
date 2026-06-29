@@ -433,11 +433,14 @@ class _MetricsCard extends StatelessWidget {
               children: [
                 Text(label),
                 if (hint != null)
-                  Text(
-                    hint,
-                    // Faint on-brand neutro, leggibile sia in light che in dark
-                    // (il metodo _row non ha accesso al context per i token).
-                    style: const TextStyle(fontSize: 11, color: Color(0xFF7B908C)),
+                  // Builder per avere un context sotto il Theme e leggere il
+                  // token `faint` (on-brand, AA in light e dark) invece di un
+                  // esadecimale fisso.
+                  Builder(
+                    builder: (context) => Text(
+                      hint,
+                      style: TextStyle(fontSize: 11, color: context.tokens.faint),
+                    ),
                   ),
               ],
             ),

@@ -24,8 +24,10 @@ class BreathingOrb extends StatelessWidget {
     required this.phase,
     required this.phaseProgress,
     this.size = 280,
-    this.inhaleColor = const Color(0xFF4FB3BF),
-    this.exhaleColor = const Color(0xFF14695E),
+    // Colori sempre passati dai call site (token inhale/exhale): nessun default
+    // hardcoded, così l'orb resta on-brand in light e dark senza esadecimali.
+    required this.inhaleColor,
+    required this.exhaleColor,
   });
 
   @override
