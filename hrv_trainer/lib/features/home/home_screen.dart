@@ -77,6 +77,8 @@ class HomeScreen extends ConsumerWidget {
                 ),
                 data: (r) => _ReadinessHero(readiness: r, doneToday: doneToday),
               ),
+              const SizedBox(height: 12),
+              const _HrvTrendEntry(),
               const SizedBox(height: 22),
               const SectionHeader(title: 'Pratiche'),
               const _PracticeGrid(),
@@ -255,6 +257,46 @@ class _CtaSpec {
   final IconData icon;
   final String route;
   const _CtaSpec(this.label, this.icon, this.route);
+}
+
+/// Ingresso alla cronaca cronica `/hrv` ("specchio settimanale"): la storia
+/// lenta dei progressi, distinta dalla prontezza di oggi (`_ReadinessHero` →
+/// `/readiness`). Usa push come il gemello, così il back torna in Home.
+class _HrvTrendEntry extends StatelessWidget {
+  const _HrvTrendEntry();
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
+    return AppCard(
+      onTap: () => context.push('/hrv'),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(color: t.primaryTonal, shape: BoxShape.circle),
+            child: Icon(Icons.insights, size: 22, color: t.primary),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Andamento HRV', style: text.titleSmall),
+                const SizedBox(height: 2),
+                Text('Specchio settimanale',
+                    style: text.bodySmall?.copyWith(color: t.dim)),
+              ],
+            ),
+          ),
+          Icon(Icons.chevron_right, color: t.faint),
+        ],
+      ),
+    );
+  }
 }
 
 class _PracticeGrid extends StatelessWidget {

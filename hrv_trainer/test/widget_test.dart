@@ -36,6 +36,8 @@ void main() {
 
     // La bottom nav della shell è presente all'avvio (tab Home).
     expect(find.text('Home'), findsWidgets);
+    // La card d'ingresso alla cronaca /hrv è agganciata in Home (GAP 3).
+    expect(find.text('Andamento HRV'), findsOneWidget);
   });
 
   testWidgets('Prima apertura (onboarding non visto) mostra l\'onboarding',
