@@ -9,6 +9,7 @@ import '../../shared/connect_iq/watch_readiness.dart';
 import '../../shared/notifications/reminder_settings.dart';
 import '../../shared/profile/user_profile_provider.dart';
 import '../../shared/ui/ui.dart';
+import '../../shared/usage/usage_metrics_provider.dart';
 
 /// Tab "Profilo": nome (per il saluto in Home), stato orologio e promemoria.
 class SettingsScreen extends ConsumerWidget {
@@ -140,6 +141,10 @@ class SettingsScreen extends ConsumerWidget {
                 style: text.bodySmall?.copyWith(color: t.faint),
               ),
             ],
+
+            const SizedBox(height: 22),
+            const SectionHeader(title: 'Statistiche d\'uso (locali)'),
+            const _UsageStatsCard(),
           ],
         ),
       ),
@@ -387,6 +392,105 @@ class _DeviceCard extends ConsumerWidget {
           trailing,
         ],
       ),
+    );
+  }
+}
+
+/// Sezione "Statistiche d'uso (locali)" (#13): mostra le metriche raccolte
+/// on-device. Nessun dato lascia il telefono.
+class _UsageStatsCard extends ConsumerWidget {
+  const _UsageStatsCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
+    final s = ref.watch(usageSummaryProvider);
+    final w = ref.watch(watchlessShareProvider).valueOrNull;
+
+    String ttfb() {
+      final d = s.timeToFirstBreath;
+      if (d == null) return '—';
+      return d.inMinutes < 1 ? '${d.inSeconds}s' : '${d.inMinutes} min';
+    }
+
+    String watchless() {
+      if (w == null || w.total == 0) return '—';
+      final pct = (100 * w.watchless / w.total).round();
+      return '$pct% (${w.watchless}/${w.total})';
+    }
+
+    final streak =
+        s.currentStreak == 1 ? '1 giorno' : '${s.currentStreak} giorni';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        AppCard(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 4),
+          child: Column(
+            children: [
+              _StatRow(label: 'Giorni attivi', value: '${s.activeDays}'),
+              _StatRow(label: 'Serie attuale', value: streak),
+              _StatRow(label: 'Primo respiro dopo l\'avvio', value: ttfb()),
+              _StatRow(label: 'Respiri senza orologio', value: watchless()),
+              _StatRow(
+                  label: 'Tornato il giorno dopo',
+                  value: s.returnedD1 ? 'Sì' : 'No'),
+              _StatRow(
+                  label: 'Tornato entro 7 giorni',
+                  value: s.returnedD7 ? 'Sì' : 'No'),
+              _StatRow(
+                label: 'Onboarding completato',
+                value: s.onboardingCompleted ? 'Sì' : 'No',
+                showDivider: false,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Tutto in locale: nessun dato lascia il telefono.',
+          style: text.bodySmall?.copyWith(color: t.faint),
+        ),
+      ],
+    );
+  }
+}
+
+class _StatRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final bool showDivider;
+  const _StatRow({
+    required this.label,
+    required this.value,
+    this.showDivider = true,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Row(
+            children: [
+              Expanded(child: Text(label, style: text.bodyMedium)),
+              Text(
+                value,
+                style: text.bodyMedium?.copyWith(
+                  color: t.dim,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (showDivider) Divider(height: 1, color: t.line),
+      ],
     );
   }
 }
