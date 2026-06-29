@@ -8,23 +8,19 @@ import '../../../shared/hrv/breathing_pacer.dart';
 class PacerPreferences {
   final BreathingPattern pattern;
   final bool hapticsEnabled;
-  final bool soundEnabled;
 
   const PacerPreferences({
     required this.pattern,
     this.hapticsEnabled = true,
-    this.soundEnabled = false,
   });
 
   PacerPreferences copyWith({
     BreathingPattern? pattern,
     bool? hapticsEnabled,
-    bool? soundEnabled,
   }) =>
       PacerPreferences(
         pattern: pattern ?? this.pattern,
         hapticsEnabled: hapticsEnabled ?? this.hapticsEnabled,
-        soundEnabled: soundEnabled ?? this.soundEnabled,
       );
 }
 
