@@ -42,3 +42,13 @@ final morningCheckInDoneTodayProvider =
   );
   return todays.isNotEmpty;
 });
+
+/// `true` se è già stata trovata una frequenza di risonanza (almeno un
+/// assessment salvato). Guida il nudge "trova la tua risonanza" in home, che
+/// appare solo finché è `false` — rende esplicita la sequenza consigliata
+/// (RF → respiro quotidiano → sessione). autoDispose: si ricalcola rientrando
+/// in home, quindi il nudge sparisce da sé dopo un assessment.
+final resonanceFoundProvider = FutureProvider.autoDispose<bool>((ref) async {
+  final repo = ref.watch(sessionRepositoryProvider);
+  return (await repo.latestResonanceBpm()) != null;
+});

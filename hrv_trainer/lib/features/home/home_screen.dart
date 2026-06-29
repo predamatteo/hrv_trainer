@@ -77,6 +77,13 @@ class HomeScreen extends ConsumerWidget {
                 ),
                 data: (r) => _ReadinessHero(readiness: r, doneToday: doneToday),
               ),
+              // Nudge sequenza (#9): finché non c'è una frequenza di risonanza,
+              // invita a trovarla (primo passo del percorso). Sparisce una volta
+              // fatta. Mostrato solo quando il provider ha risolto a `false`.
+              if (ref.watch(resonanceFoundProvider).valueOrNull == false) ...[
+                const SizedBox(height: 12),
+                const _ResonanceNudge(),
+              ],
               const SizedBox(height: 12),
               const _HrvTrendEntry(),
               const SizedBox(height: 22),
@@ -260,6 +267,43 @@ class _CtaSpec {
   final IconData icon;
   final String route;
   const _CtaSpec(this.label, this.icon, this.route);
+}
+
+/// Nudge della sequenza consigliata (#9): invita a trovare la frequenza di
+/// risonanza come primo passo. Mostrato dalla Home solo finché non esiste un
+/// assessment (vedi `resonanceFoundProvider`).
+class _ResonanceNudge extends StatelessWidget {
+  const _ResonanceNudge();
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
+    return AppCard(
+      onTap: () => context.push('/assessment'),
+      color: t.accentTonal,
+      border: Colors.transparent,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      child: Row(
+        children: [
+          Icon(Icons.graphic_eq, size: 22, color: t.accent),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Trova la tua frequenza di risonanza', style: text.titleSmall),
+                const SizedBox(height: 2),
+                Text('Il primo passo: cuce il respiro su di te',
+                    style: text.bodySmall?.copyWith(color: t.dim)),
+              ],
+            ),
+          ),
+          Icon(Icons.chevron_right, color: t.faint),
+        ],
+      ),
+    );
+  }
 }
 
 /// Ingresso alla cronaca cronica `/hrv` ("specchio settimanale"): la storia
