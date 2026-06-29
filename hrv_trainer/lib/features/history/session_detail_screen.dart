@@ -116,34 +116,81 @@ class _DetailBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = detail.session;
     final rr = detail.rrSamples;
+    // Sessione senza HRV (es. Respiro libero senza orologio): metriche vuote.
+    // Mostrare un muro di zeri (RMSSD 0, SDNN 0, spettro vuoto…) sarebbe solo
+    // rumore: teniamo l'header (data, ritmo, durata) e una nota, niente card HRV.
+    final hasHrv = s.metrics.samples > 0;
     return ListView(
       padding: const EdgeInsets.all(12),
       children: [
         _HeaderCard(session: s),
-        const SizedBox(height: 12),
-        _StatGrid(metrics: s.metrics, pattern: s.pattern, kind: s.kind),
-        const SizedBox(height: 12),
-        _MetricsCard(metrics: s.metrics),
-        const SizedBox(height: 12),
-        _SpectrumCard(rr: rr, metrics: s.metrics, pattern: s.pattern, kind: s.kind),
-        const SizedBox(height: 12),
-        _TachogramCard(
-          rr: rr,
-          startedAt: s.startedAt,
-          metrics: s.metrics,
-          pattern: s.pattern,
-          kind: s.kind,
-          tag: s.tag,
-        ),
-        const SizedBox(height: 12),
-        _PoincareCard(rr: rr, metrics: s.metrics),
-        const SizedBox(height: 12),
-        _QualityCard(metrics: s.metrics),
+        if (hasHrv) ...[
+          const SizedBox(height: 12),
+          _StatGrid(metrics: s.metrics, pattern: s.pattern, kind: s.kind),
+          const SizedBox(height: 12),
+          _MetricsCard(metrics: s.metrics),
+          const SizedBox(height: 12),
+          _SpectrumCard(rr: rr, metrics: s.metrics, pattern: s.pattern, kind: s.kind),
+          const SizedBox(height: 12),
+          _TachogramCard(
+            rr: rr,
+            startedAt: s.startedAt,
+            metrics: s.metrics,
+            pattern: s.pattern,
+            kind: s.kind,
+            tag: s.tag,
+          ),
+          const SizedBox(height: 12),
+          _PoincareCard(rr: rr, metrics: s.metrics),
+          const SizedBox(height: 12),
+          _QualityCard(metrics: s.metrics),
+        ] else ...[
+          const SizedBox(height: 12),
+          const _NoHrvNote(),
+        ],
         if (s.notes != null && s.notes!.isNotEmpty) ...[
           const SizedBox(height: 12),
           _NotesCard(notes: s.notes!),
         ],
       ],
+    );
+  }
+}
+
+/// Nota per le sessioni senza HRV (Respiro libero senza orologio): spiega che
+/// durata e ritmo sono salvati e come ottenere le metriche.
+class _NoHrvNote extends StatelessWidget {
+  const _NoHrvNote();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.air, color: theme.colorScheme.primary),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Respiro senza orologio', style: theme.textTheme.titleSmall),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Durata e ritmo del respiro sono salvati e contano nella tua '
+                    'costanza. Per le metriche HRV (coerenza, RMSSD…) indossa il '
+                    'Garmin durante la sessione.',
+                    style: theme.textTheme.bodyMedium,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
