@@ -52,9 +52,7 @@ ChartInsight interpretTachogram({
   final profile = _profileFor(tag);
   final drift = _hrDriftBpm(rr);
   final p2t = metrics.peakToTroughMs;
-  final hasPacer = kind == SessionKind.training ||
-      kind == SessionKind.assessment;
-  final coherenceHz = hasPacer
+  final coherenceHz = kind.hasPacer
       ? (metrics.lfPeakHz - pattern.frequencyHz).abs()
       : null;
 
@@ -170,7 +168,12 @@ ChartInsight interpretPoincare(HrvMetrics metrics) {
 ///
 /// Il livello è guidato soprattutto da coherence + allineamento: un bilancio
 /// "LF dominante" durante il respiro lento è desiderato, non penalizzante.
-ChartInsight interpretSpectrum(HrvMetrics m, BreathingPattern p) {
+///
+/// L'allineamento col pacer ha senso solo per le sessioni a respiro guidato
+/// ([SessionKindX.hasPacer]). Per le letture spontanee (Morning) NON c'è alcun
+/// pacer di riferimento: in quel caso si omette il confronto con la frequenza
+/// guida e il giudizio si basa su coherence + concentrazione in LF.
+ChartInsight interpretSpectrum(HrvMetrics m, BreathingPattern p, SessionKind kind) {
   if (m.samples < 20 || m.totalPower <= 0) {
     return const ChartInsight(
       headline: 'Spettro non disponibile',
@@ -185,8 +188,9 @@ ChartInsight interpretSpectrum(HrvMetrics m, BreathingPattern p) {
   final coh = m.coherenceRatio;
   final paceHz = p.frequencyHz;
   // Disallineamento del picco LF rispetto al respiro guidato. Usiamo lfPeakHz
-  // perché a ~6 bpm la risonanza vive nella banda LF (0.04-0.15 Hz).
-  final alignHz = (m.lfPeakHz - paceHz).abs();
+  // perché a ~6 bpm la risonanza vive nella banda LF (0.04-0.15 Hz). Null per
+  // le letture spontanee (nessun pacer): niente confronto di frequenza.
+  final alignHz = kind.hasPacer ? (m.lfPeakHz - paceHz).abs() : null;
   final peakBpm = m.lfPeakHz * 60;
   final pacerBpm = p.breathsPerMinute;
 
@@ -230,8 +234,15 @@ ChartInsight interpretSpectrum(HrvMetrics m, BreathingPattern p) {
         'organizzata su una singola frequenza.');
   }
 
-  // Componente 3: allineamento del picco con il pacer.
-  if (alignHz <= 0.012) {
+  // Componente 3: allineamento del picco con il pacer — solo a respiro
+  // guidato. A respiro spontaneo descriviamo dove cade il picco, senza
+  // confrontarlo con una frequenza guida inesistente.
+  if (alignHz == null) {
+    parts.add(
+        'Il picco di potenza cade a ${m.lfPeakHz.toStringAsFixed(3)} Hz '
+        '(${peakBpm.toStringAsFixed(1)} cicli/min): è la frequenza attorno a '
+        'cui si concentra la tua oscillazione cardiaca a respiro spontaneo.');
+  } else if (alignHz <= 0.012) {
     parts.add(
         'Il picco cade a ${m.lfPeakHz.toStringAsFixed(3)} Hz '
         '(${peakBpm.toStringAsFixed(1)} cicli/min), sovrapposto al pacer '
@@ -264,9 +275,16 @@ ChartInsight interpretSpectrum(HrvMetrics m, BreathingPattern p) {
 
 String _spectrumHeadline({
   required double coh,
-  required double alignHz,
+  required double? alignHz,
   required double lfNu,
 }) {
+  // Respiro spontaneo (nessun pacer): giudichiamo solo coerenza + LF.
+  if (alignHz == null) {
+    if (coh >= 2.5) return 'Picco spettrale netto';
+    if (coh >= 1.0) return 'Coerenza in costruzione';
+    if (lfNu >= 70) return 'Potenza in LF, picco diffuso';
+    return 'Spettro ancora disorganizzato';
+  }
   final aligned = alignHz <= 0.012;
   if (coh >= 2.5 && aligned) return 'Risonanza spettrale netta';
   if (coh >= 2.5) return 'Picco coerente ma fuori frequenza';
@@ -278,8 +296,16 @@ String _spectrumHeadline({
 
 InsightLevel _spectrumLevel({
   required double coh,
-  required double alignHz,
+  required double? alignHz,
 }) {
+  // Senza pacer non c'è allineamento da premiare: il livello segue la sola
+  // coerenza del picco.
+  if (alignHz == null) {
+    if (coh >= 2.5) return InsightLevel.excellent;
+    if (coh >= 1.5) return InsightLevel.good;
+    if (coh >= 1.0) return InsightLevel.fair;
+    return InsightLevel.poor;
+  }
   final aligned = alignHz <= 0.012;
   final nearby = alignHz <= 0.025;
   if (coh >= 2.5 && aligned) return InsightLevel.excellent;

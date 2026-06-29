@@ -121,11 +121,11 @@ class _DetailBody extends StatelessWidget {
       children: [
         _HeaderCard(session: s),
         const SizedBox(height: 12),
-        _StatGrid(metrics: s.metrics, pattern: s.pattern),
+        _StatGrid(metrics: s.metrics, pattern: s.pattern, kind: s.kind),
         const SizedBox(height: 12),
         _MetricsCard(metrics: s.metrics),
         const SizedBox(height: 12),
-        _SpectrumCard(rr: rr, metrics: s.metrics, pattern: s.pattern),
+        _SpectrumCard(rr: rr, metrics: s.metrics, pattern: s.pattern, kind: s.kind),
         const SizedBox(height: 12),
         _TachogramCard(
           rr: rr,
@@ -195,12 +195,18 @@ class _HeaderCard extends StatelessWidget {
               spacing: 8,
               runSpacing: 8,
               children: [
-                _Chip(
-                  icon: Icons.air,
-                  label:
-                      '${session.pattern.breathsPerMinute.toStringAsFixed(1)} bpm',
-                ),
-                _Chip(icon: Icons.compare_arrows, label: 'I:E $iE'),
+                // La frequenza/rapporto I:E del respiro guidato ha senso solo
+                // per training e assessment. Le letture spontanee (Morning) NON
+                // seguivano un pacer: mostrare "6,0 bpm" sarebbe fuorviante.
+                if (session.kind.hasPacer) ...[
+                  _Chip(
+                    icon: Icons.air,
+                    label:
+                        '${session.pattern.breathsPerMinute.toStringAsFixed(1)} bpm',
+                  ),
+                  _Chip(icon: Icons.compare_arrows, label: 'I:E $iE'),
+                ] else
+                  const _Chip(icon: Icons.air, label: 'Respiro spontaneo'),
                 _Chip(icon: Icons.timer_outlined, label: _kindLabel(session.kind)),
               ],
             ),
@@ -237,7 +243,12 @@ class _HeaderCard extends StatelessWidget {
 class _StatGrid extends StatelessWidget {
   final HrvMetrics metrics;
   final BreathingPattern pattern;
-  const _StatGrid({required this.metrics, required this.pattern});
+  final SessionKind kind;
+  const _StatGrid({
+    required this.metrics,
+    required this.pattern,
+    required this.kind,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -255,7 +266,13 @@ class _StatGrid extends StatelessWidget {
         const SizedBox(width: 8),
         Expanded(child: StatTile(value: metrics.meanHrBpm.toStringAsFixed(0), label: 'FC med')),
         const SizedBox(width: 8),
-        Expanded(child: StatTile(value: c(pattern.breathsPerMinute, 1), label: 'resp.')),
+        // Per le sessioni guidate l'ultima tile è la frequenza del pacer; per
+        // le letture spontanee (Morning) non c'è frequenza, mostriamo SDNN.
+        Expanded(
+          child: kind.hasPacer
+              ? StatTile(value: c(pattern.breathsPerMinute, 1), label: 'resp.')
+              : StatTile(value: metrics.sdnnMs.toStringAsFixed(0), label: 'SDNN'),
+        ),
       ],
     );
   }
@@ -466,8 +483,7 @@ class _TachogramCard extends StatelessWidget {
   /// respiro SPONTANEO, quindi sovrapporre una curva-guida sarebbe fuorviante
   /// (l'utente non la seguiva). Allineato con interpretTachogram, che esclude
   /// anch'esso `reading` dalla coerenza col pacer. Freestyle = respiro libero.
-  bool get _hasPacer =>
-      kind == SessionKind.training || kind == SessionKind.assessment;
+  bool get _hasPacer => kind.hasPacer;
 
   Widget _buildChart(ThemeData theme) {
     final scheme = theme.colorScheme;
@@ -919,10 +935,12 @@ class _SpectrumCard extends StatelessWidget {
   final List<RrInterval> rr;
   final HrvMetrics metrics;
   final BreathingPattern pattern;
+  final SessionKind kind;
   const _SpectrumCard({
     required this.rr,
     required this.metrics,
     required this.pattern,
+    required this.kind,
   });
 
   // La banda osservata coincide con quella del calcolo metriche
@@ -978,14 +996,17 @@ class _SpectrumCard extends StatelessWidget {
                     fontWeight: FontWeight.w600,
                   )),
               const SizedBox(height: 8),
-              _SpectrumLegend(scheme: theme.colorScheme),
+              _SpectrumLegend(
+                scheme: theme.colorScheme,
+                showPacer: kind.hasPacer,
+              ),
               const SizedBox(height: 8),
               SizedBox(
                 height: 170,
                 child: _buildPsd(theme, spec),
               ),
               const SizedBox(height: 12),
-              _InsightBox(insight: interpretSpectrum(metrics, pattern)),
+              _InsightBox(insight: interpretSpectrum(metrics, pattern, kind)),
             ],
           ],
         ),
@@ -1025,26 +1046,29 @@ class _SpectrumCard extends StatelessWidget {
           ),
         ],
       ),
-      // Marker verticale sulla frequenza del pacer + linea sul picco LF.
+      // Marker verticale sulla frequenza del pacer — solo per le sessioni
+      // guidate. Per le letture spontanee (Morning) non c'era pacer, quindi
+      // nessuna linea/etichetta di frequenza guida.
       extraLinesData: ExtraLinesData(
         verticalLines: [
-          VerticalLine(
-            x: pacerHz,
-            color: scheme.primary.withValues(alpha: 0.8),
-            strokeWidth: 1.4,
-            dashArray: const [4, 3],
-            label: VerticalLineLabel(
-              show: true,
-              alignment: Alignment.topRight,
-              padding: const EdgeInsets.only(left: 4, bottom: 2),
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: scheme.primary,
-                fontWeight: FontWeight.w600,
+          if (kind.hasPacer)
+            VerticalLine(
+              x: pacerHz,
+              color: scheme.primary.withValues(alpha: 0.8),
+              strokeWidth: 1.4,
+              dashArray: const [4, 3],
+              label: VerticalLineLabel(
+                show: true,
+                alignment: Alignment.topRight,
+                padding: const EdgeInsets.only(left: 4, bottom: 2),
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: scheme.primary,
+                  fontWeight: FontWeight.w600,
+                ),
+                labelResolver: (_) =>
+                    'pacer ${pattern.breathsPerMinute.toStringAsFixed(1)}',
               ),
-              labelResolver: (_) =>
-                  'pacer ${pattern.breathsPerMinute.toStringAsFixed(1)}',
             ),
-          ),
         ],
       ),
       titlesData: FlTitlesData(
@@ -1241,10 +1265,12 @@ class _BandKey extends StatelessWidget {
   }
 }
 
-/// Legenda del periodogramma: fasce di banda + marker pacer.
+/// Legenda del periodogramma: fasce di banda + (solo a respiro guidato)
+/// marker del pacer.
 class _SpectrumLegend extends StatelessWidget {
   final ColorScheme scheme;
-  const _SpectrumLegend({required this.scheme});
+  final bool showPacer;
+  const _SpectrumLegend({required this.scheme, this.showPacer = true});
 
   @override
   Widget build(BuildContext context) {
@@ -1258,18 +1284,19 @@ class _SpectrumLegend extends StatelessWidget {
             color: scheme.tertiary.withValues(alpha: 0.35), label: 'banda LF'),
         _BandKey(
             color: scheme.secondary.withValues(alpha: 0.35), label: 'banda HF'),
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              width: 14,
-              height: 2,
-              child: CustomPaint(painter: _DashPainter(scheme.primary)),
-            ),
-            const SizedBox(width: 4),
-            Text('pacer', style: textTheme.labelSmall),
-          ],
-        ),
+        if (showPacer)
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 14,
+                height: 2,
+                child: CustomPaint(painter: _DashPainter(scheme.primary)),
+              ),
+              const SizedBox(width: 4),
+              Text('pacer', style: textTheme.labelSmall),
+            ],
+          ),
       ],
     );
   }

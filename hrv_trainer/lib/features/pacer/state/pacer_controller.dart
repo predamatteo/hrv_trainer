@@ -105,6 +105,15 @@ class PacerController extends StateNotifier<PacerTick> {
     _timer?.cancel();
     _timer = null;
     _watch.stop();
+    _cancelHaptics();
+  }
+
+  /// Interrompe SUBITO ogni vibrazione in corso o già in coda sul canale
+  /// nativo. Fermare il solo Timer non basta: l'ultima pulsazione inviata a
+  /// `Vibration.vibrate` continuava a far vibrare il telefono dopo l'uscita
+  /// dal pacer libero (bug "continua a vibrare anche se esco").
+  void _cancelHaptics() {
+    if (_hasVibrator) Vibration.cancel();
   }
 
   void resume() {
@@ -185,6 +194,7 @@ class PacerController extends StateNotifier<PacerTick> {
     _timer?.cancel();
     _timer = null;
     _watch.stop();
+    _cancelHaptics();
     super.dispose();
   }
 }

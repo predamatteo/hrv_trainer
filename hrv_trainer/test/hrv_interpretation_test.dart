@@ -318,6 +318,40 @@ void main() {
     });
   });
 
+  group('interpretSpectrum', () {
+    test('Allineamento col pacer incluso solo a respiro guidato', () {
+      final rr = _synth(
+        seconds: 180,
+        meanMs: 950,
+        rsaAmpMs: 60,
+        rsaFreqHz: 0.1,
+      );
+      final m = HrvCalculator.compute(rr);
+      final iTraining = interpretSpectrum(
+          m, BreathingPattern.resonance6bpm, SessionKind.training);
+      final iReading = interpretSpectrum(
+          m, BreathingPattern.resonance6bpm, SessionKind.reading);
+      // A respiro guidato confrontiamo il picco col pacer; a respiro
+      // spontaneo (Morning) no: nessuna menzione del pacer/frequenza guida.
+      expect(iTraining.body, contains('pacer'));
+      expect(iReading.body, isNot(contains('pacer')));
+      expect(iReading.body.toLowerCase(), contains('respiro spontaneo'));
+    });
+
+    test('Spettro non disponibile sotto soglia campioni → neutral', () {
+      final rr = List.generate(
+        10,
+        (i) => RrInterval(
+            timestamp: DateTime(2026).add(Duration(seconds: i)), ms: 900),
+      );
+      final m = HrvCalculator.compute(rr);
+      final i = interpretSpectrum(
+          m, BreathingPattern.resonance6bpm, SessionKind.reading);
+      expect(i.level, InsightLevel.neutral);
+      expect(i.headline.toLowerCase(), contains('spettro'));
+    });
+  });
+
   group('interpretPoincare', () {
     test('Nuvola a sigaro (ratio basso) viene riconosciuta', () {
       // Oscillazione molto lenta (0.02 Hz = 50s di periodo): SDNN alto,

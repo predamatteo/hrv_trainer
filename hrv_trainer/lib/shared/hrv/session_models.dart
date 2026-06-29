@@ -5,6 +5,16 @@ import 'rr_interval.dart';
 
 enum SessionKind { assessment, training, freestyle, reading }
 
+extension SessionKindX on SessionKind {
+  /// True solo per le sessioni a respiro GUIDATO (training, assessment): per
+  /// queste è esistito un pacer ed ha senso mostrarne o confrontarne la
+  /// frequenza. `reading` (check-in mattutino, respiro SPONTANEO) e
+  /// `freestyle` (respiro libero) NON hanno pacer: esporre una "frequenza del
+  /// respiro" lì è fuorviante (l'utente non seguiva alcuna guida).
+  bool get hasPacer =>
+      this == SessionKind.training || this == SessionKind.assessment;
+}
+
 /// Tag contestuale della sessione. Permette di segmentare lo storico e
 /// calcolare baseline separati (es. "Morning reading" per readiness score).
 enum SessionTag {

@@ -127,7 +127,14 @@ class _PacerScreenState extends ConsumerState<PacerScreen> {
                   CircleControlButton(
                     icon: Icons.stop,
                     tooltip: 'Esci',
-                    onTap: () => context.pop(),
+                    onTap: () {
+                      // Ferma SUBITO timer + vibrazione: senza, durante la
+                      // transizione di uscita (prima che dispose() chiami
+                      // pause()) il pacer continuava a vibrare a ogni cambio
+                      // fase, dando l'impressione che vibrasse "anche dopo".
+                      ref.read(pacerControllerProvider.notifier).pause();
+                      context.pop();
+                    },
                   ),
                   const SizedBox(width: 18),
                   CircleControlButton(
