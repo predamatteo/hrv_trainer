@@ -90,6 +90,18 @@ void main() {
     test('lista vuota → []', () {
       expect(DashboardStats.coherenceTrend([]), isEmpty);
     });
+
+    test('freestyle a metriche vuote (respiro senza watch) escluso dai trend', () {
+      // Il pacer watch-less salva sessioni freestyle con metriche vuote
+      // (rmssd/coherence 0): contano come pratica ma non devono inquinare i
+      // trend HRV.
+      final list = [
+        _s(kind: SessionKind.freestyle, tag: SessionTag.general, when: now, rmssd: 0, coherence: 0, id: 1),
+        _s(kind: SessionKind.freestyle, tag: SessionTag.general, when: now, rmssd: 0, coherence: 0, id: 2),
+      ];
+      expect(DashboardStats.coherenceTrend(list), isEmpty);
+      expect(DashboardStats.rmssdByTag(list), isEmpty);
+    });
   });
 
   group('DashboardStats.rollingMean', () {
