@@ -32,7 +32,7 @@ class SessioneHubScreen extends StatelessWidget {
                 style: text.bodyMedium?.copyWith(color: t.dim),
               ),
             ),
-            _PracticeCard(
+            PracticeCard(
               icon: Icons.monitor_heart,
               tone: PillTone.primary,
               title: 'Biofeedback',
@@ -40,7 +40,7 @@ class SessioneHubScreen extends StatelessWidget {
               onTap: () => context.push('/training'),
             ),
             const SizedBox(height: 12),
-            _PracticeCard(
+            PracticeCard(
               icon: Icons.self_improvement,
               tone: PillTone.accent,
               title: 'Respiro libero',
@@ -48,7 +48,7 @@ class SessioneHubScreen extends StatelessWidget {
               onTap: () => context.push('/pacer'),
             ),
             const SizedBox(height: 12),
-            _PracticeCard(
+            PracticeCard(
               icon: Icons.wb_twilight,
               tone: PillTone.accent,
               title: 'Check-in mattutino',
@@ -56,7 +56,7 @@ class SessioneHubScreen extends StatelessWidget {
               onTap: () => context.push('/readiness/checkin'),
             ),
             const SizedBox(height: 12),
-            _PracticeCard(
+            PracticeCard(
               icon: Icons.graphic_eq,
               tone: PillTone.accent,
               title: 'Assessment',
@@ -70,52 +70,3 @@ class SessioneHubScreen extends StatelessWidget {
   }
 }
 
-class _PracticeCard extends StatelessWidget {
-  final IconData icon;
-  final PillTone tone;
-  final String title;
-  final String subtitle;
-  final VoidCallback onTap;
-
-  const _PracticeCard({
-    required this.icon,
-    required this.tone,
-    required this.title,
-    required this.subtitle,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    final text = Theme.of(context).textTheme;
-    final c = Pill.colorsFor(tone, t);
-    return AppCard(
-      onTap: onTap,
-      padding: const EdgeInsets.all(18),
-      child: Row(
-        children: [
-          Container(
-            width: 52,
-            height: 52,
-            decoration: BoxDecoration(color: c.bg, borderRadius: BorderRadius.circular(16)),
-            child: Icon(icon, color: c.fg, size: 26),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: text.titleMedium),
-                const SizedBox(height: 3),
-                Text(subtitle, style: text.bodySmall?.copyWith(color: t.dim)),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          Icon(Icons.chevron_right, color: t.faint),
-        ],
-      ),
-    );
-  }
-}

@@ -310,107 +310,58 @@ class _PracticeGrid extends StatelessWidget {
     return Column(
       children: [
         Row(
-          children: const [
+          children: [
             Expanded(
-              child: _PracticeTile(
+              child: PracticeCard(
+                compact: true,
                 icon: Icons.self_improvement,
                 title: 'Respiro libero',
                 subtitle: 'Pacer a ~6/min',
-                route: '/pacer',
                 tone: PillTone.accent,
+                onTap: () => context.push('/pacer'),
               ),
             ),
-            SizedBox(width: 12),
+            const SizedBox(width: 12),
             Expanded(
-              child: _PracticeTile(
+              child: PracticeCard(
+                compact: true,
+                tinted: true,
                 icon: Icons.monitor_heart,
                 title: 'Biofeedback',
                 subtitle: 'Sessione con orologio',
-                route: '/training',
                 tone: PillTone.primary,
-                tinted: true,
+                onTap: () => context.push('/training'),
               ),
             ),
           ],
         ),
         const SizedBox(height: 12),
         Row(
-          children: const [
+          children: [
             Expanded(
-              child: _PracticeTile(
+              child: PracticeCard(
+                compact: true,
                 icon: Icons.wb_twilight,
                 title: 'Check-in',
                 subtitle: 'Lettura mattutina',
-                route: '/readiness/checkin',
                 tone: PillTone.accent,
+                onTap: () => context.push('/readiness/checkin'),
               ),
             ),
-            SizedBox(width: 12),
+            const SizedBox(width: 12),
             Expanded(
-              child: _PracticeTile(
+              child: PracticeCard(
+                compact: true,
                 icon: Icons.graphic_eq,
                 title: 'Assessment',
                 subtitle: 'Trova la risonanza',
-                route: '/assessment',
                 tone: PillTone.accent,
+                onTap: () => context.push('/assessment'),
               ),
             ),
           ],
         ),
       ],
-    );
-  }
-}
-
-class _PracticeTile extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final String route;
-  final PillTone tone;
-  final bool tinted;
-
-  const _PracticeTile({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.route,
-    required this.tone,
-    this.tinted = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    final text = Theme.of(context).textTheme;
-    final c = Pill.colorsFor(tone, t);
-    return AppCard(
-      onTap: () => context.push(route),
-      color: tinted ? t.primaryTonal : t.tonal,
-      border: Colors.transparent,
-      radius: 22,
-      padding: const EdgeInsets.all(16),
-      child: SizedBox(
-        height: 86,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Icon(icon, size: 27, color: c.fg),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: text.titleSmall),
-                const SizedBox(height: 2),
-                Text(subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: text.bodySmall?.copyWith(color: t.dim)),
-              ],
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
