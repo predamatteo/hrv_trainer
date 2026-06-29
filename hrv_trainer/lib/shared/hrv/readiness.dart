@@ -31,9 +31,9 @@ enum TrainingAdvice { unknown, trainHard, trainEasy, rest }
 
 extension TrainingAdviceX on TrainingAdvice {
   String get label => switch (this) {
-        TrainingAdvice.trainHard => 'Via libera al carico',
-        TrainingAdvice.trainEasy => 'Carico leggero',
-        TrainingAdvice.rest => 'Recupero',
+        TrainingAdvice.trainHard => 'Sessione piena',
+        TrainingAdvice.trainEasy => 'Sessione dolce',
+        TrainingAdvice.rest => 'Solo respiro lento',
         TrainingAdvice.unknown => '—',
       };
 }
@@ -317,19 +317,18 @@ class ReadinessCalculator {
     final base = switch (band) {
       ReadinessBand.green => (
           TrainingAdvice.trainHard,
-          'Tono vagale in linea o superiore: ok a sessioni di qualità o '
-              'intensità. Buona giornata per il training alla frequenza di '
-              'risonanza.'
+          'Il corpo è ben recuperato: se ti va, oggi una sessione piena alla '
+              'tua frequenza di risonanza.'
         ),
       ReadinessBand.yellow => (
           TrainingAdvice.trainEasy,
-          'Readiness sotto la norma: preferisci tecnica a basso carico, una '
-              'sessione breve o recovery attivo. Niente record oggi.'
+          'Recupero un po\' sotto il tuo solito: meglio una sessione breve e '
+              'dolce. Nessuna fretta.'
         ),
       ReadinessBand.red => (
           TrainingAdvice.rest,
-          'Recupero prioritario: evita carichi pesanti, prioritizza sonno, '
-              'idratazione e respirazione lenta.'
+          'Oggi datti priorità: riposo e, se vuoi, qualche minuto di respiro '
+              'lento. Niente di più.'
         ),
       ReadinessBand.unknown => (TrainingAdvice.unknown, ''),
     };
@@ -345,9 +344,8 @@ class ReadinessCalculator {
       if (streak >= 3) {
         return (
           TrainingAdvice.trainEasy,
-          '$streak mattine consecutive sopra il baseline: valuta una seduta '
-              'più leggera oggi per non accumulare carico (evita >2 giorni '
-              'hard di fila).'
+          '$streak mattine di fila sopra il tuo solito: oggi puoi prendertela '
+              'più comoda, una sessione dolce va benissimo.'
         );
       }
     }
@@ -356,10 +354,10 @@ class ReadinessCalculator {
 
   static String _headline(ReadinessBand b, AutonomicDirection d) {
     return switch (b) {
-      ReadinessBand.green => 'Pronto a dare',
-      ReadinessBand.yellow => 'Attenzione al carico',
-      ReadinessBand.red => 'Recupero prioritario',
-      ReadinessBand.unknown => 'Baseline non disponibile',
+      ReadinessBand.green => 'Ben recuperato',
+      ReadinessBand.yellow => 'Recupero parziale',
+      ReadinessBand.red => 'Poco recuperato',
+      ReadinessBand.unknown => 'Sto imparando il tuo normale',
     };
   }
 
@@ -375,25 +373,26 @@ class ReadinessCalculator {
     final todayStr = today.toStringAsFixed(0);
     switch (b) {
       case ReadinessBand.green:
-        return 'RMSSD $todayStr ms vs baseline $baseStr ms. Tono vagale in linea '
-            'o superiore. Puoi affrontare sessioni di qualità o intensità.';
+        return 'Oggi il corpo è ben riposato: il recupero è in linea o sopra il '
+            'tuo solito ($todayStr vs $baseStr ms). Buona giornata per una '
+            'sessione piena, se ti va.';
       case ReadinessBand.yellow:
         if (vagalSaturation) {
-          return 'RMSSD $todayStr ms (−${z.abs().toStringAsFixed(1)}σ) ma HR '
-              'sotto il tuo baseline: probabile saturazione vagale (dominanza '
-              'parasimpatica), non fatica. Sessione tranquilla, senza forzare.';
+          return 'Recupero più basso del solito ($todayStr ms) ma battito sotto '
+              'la tua media: di norma è rilassamento profondo, non stanchezza. '
+              'Va bene una sessione tranquilla.';
         }
         final dirText = d == AutonomicDirection.sympatheticHigh
-            ? 'Segnali di stress simpatico: HR sopra il tuo baseline.'
-            : 'Parasimpatico sotto media: sonno o recupero insufficienti.';
-        return 'RMSSD $todayStr ms (−${z.abs().toStringAsFixed(1)}σ). $dirText '
-            'Preferisci training tecnico a basso carico o recovery attivo.';
+            ? 'Il battito è un po\' sopra la tua media: forse un filo di tensione.'
+            : 'Forse sonno o recupero non al meglio.';
+        return 'Oggi il recupero è sotto il tuo solito ($todayStr vs $baseStr '
+            'ms). $dirText Vai piano: un respiro lento basta.';
       case ReadinessBand.red:
         final dirText = d == AutonomicDirection.sympatheticHigh
-            ? 'Evita carichi pesanti: sistema simpatico marcatamente attivo.'
-            : 'Sistema parasimpatico depresso: prioritizza riposo e idratazione.';
-        return 'RMSSD $todayStr ms (−${z.abs().toStringAsFixed(1)}σ rispetto '
-            'al baseline $baseStr ms). $dirText';
+            ? 'Il sistema di attivazione è marcato.'
+            : 'Il sistema di recupero è basso.';
+        return 'Oggi il corpo è poco recuperato ($todayStr vs il tuo solito '
+            '$baseStr ms). $dirText Datti priorità: riposo e respiro lento.';
       case ReadinessBand.unknown:
         return '';
     }
