@@ -211,13 +211,11 @@ Dove l'app **oggi** tradisce queste linee guida. Basato sui gap reali trovati ne
 
 ## 9. Stato di implementazione (branch `feat/ux-roadmap`)
 
-**Fatto:** GAP 1 (onboarding), GAP 2 (il respiro lascia traccia), GAP 3 (`/hrv` riagganciata); e dei medi/bassi: `#5b` confidence esposta sulla lettura del giorno (scelta: respiro spontaneo, baseline intatto), `#6` copy non-atletico, `#7` perché serve l'orologio, `#8` semaforo demotato, `#9` nudge "trova la risonanza" in Home (sequenza esplicita), `#10` spiegazione vista cronica + `InfoButton`/glossario in lingua-utente, `#11` `PracticeCard` condivisa (dedup Home/Sessione), `#12` rimosso `soundEnabled`, `#14` `EmptyState`/`Callout` condivisi, `#15` hex residui, `#16` Semantics.
+**Roadmap completata (16/16).** GAP 1 (onboarding), GAP 2 (il respiro lascia traccia), GAP 3 (`/hrv` riagganciata); e i medi/bassi: `#5b` confidence esposta sulla lettura del giorno (scelta: respiro spontaneo, baseline intatto), `#6` copy non-atletico, `#7` perché serve l'orologio, `#8` semaforo demotato, `#9` nudge "trova la risonanza" in Home, `#10` spiegazione vista cronica + `InfoButton`/glossario in lingua-utente, `#11` `PracticeCard` condivisa (dedup Home/Sessione), `#12` rimosso `soundEnabled`, `#13` metriche d'uso **locali on-device** (store + vista in Profilo), `#14` `EmptyState`/`Callout` condivisi, `#15` hex residui, `#16` Semantics.
 
-### Backlog (rimandati, non abbandonati)
+### Backlog
 
-- **`#13` Strumentazione del successo — metriche d'uso locali.** Solo on-device (nessun invio in rete, vincolo CIQ-only): time-to-first-breath, % sessioni watch-less, costanza, ritorno D1/D7, completamento onboarding. *Rimandato per scelta esplicita (priorità bassa); è una feature a sé (store eventi + eventuale vista), non un polish UI.*
-
-> Convenzione: quando una voce del backlog viene implementata, spostarla qui come "fatto" o rimuoverla.
+Vuoto — roadmap completata. Le voci future (es. glossario per-termine più esteso, opzione assessment paced con reset baseline per `#5a`) si aggiungono qui.
 
 ---
 
