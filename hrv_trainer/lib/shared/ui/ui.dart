@@ -5,6 +5,7 @@ export 'coherence_bar.dart';
 export 'control_buttons.dart';
 export 'empty_state.dart';
 export 'header_bar.dart';
+export 'info_button.dart';
 export 'pill.dart';
 export 'practice_card.dart';
 export 'readiness_ring.dart';
