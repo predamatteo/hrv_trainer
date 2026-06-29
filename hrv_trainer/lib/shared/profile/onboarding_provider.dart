@@ -1,6 +1,10 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// Chiave SharedPreferences del flag onboarding. Esposta perché `main()` la
+/// rilegge per seedare sincronicamente il provider prima di `runApp`.
+const String kOnboardingSeenKey = 'onboarding_seen_v1';
+
 /// Flag "onboarding già visto". Persistito in SharedPreferences: alla prima
 /// apertura (flag assente/`false`) il `redirect` del router dirotta su
 /// `/onboarding`; una volta completato ([markSeen]) non si ripresenta più.
@@ -19,11 +23,9 @@ class OnboardingController extends StateNotifier<bool> {
     if (!seed) _load();
   }
 
-  static const String _key = 'onboarding_seen_v1';
-
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
-    state = prefs.getBool(_key) ?? false;
+    state = prefs.getBool(kOnboardingSeenKey) ?? false;
   }
 
   /// Marca l'onboarding come completato e persiste. Imposta lo stato in modo
@@ -32,7 +34,7 @@ class OnboardingController extends StateNotifier<bool> {
   Future<void> markSeen() async {
     state = true;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_key, true);
+    await prefs.setBool(kOnboardingSeenKey, true);
   }
 }
 

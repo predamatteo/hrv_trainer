@@ -5,12 +5,14 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/router/app_router.dart';
 import 'core/theme/app_theme.dart';
 import 'shared/connect_iq/hr_source_provider.dart';
 import 'shared/connect_iq/remote_session_persister.dart';
 import 'shared/notifications/reminder_settings.dart';
+import 'shared/profile/onboarding_provider.dart';
 
 Future<void> main() async {
   // Necessario: il warm-up dei provider tocca i plugin (timezone,
@@ -20,7 +22,20 @@ Future<void> main() async {
   // MMMM') renderizzerebbe nomi di mese/giorno in inglese (il default `intl`).
   await initializeDateFormatting('it_IT');
   Intl.defaultLocale = 'it_IT';
-  runApp(const ProviderScope(child: HrvTrainerApp()));
+  // Legge il flag onboarding PRIMA di runApp e lo inietta come seed sincrono:
+  // così il redirect del router al primo frame sa già se mostrare l'onboarding,
+  // senza il flicker Home → /onboarding → Home per l'utente di ritorno.
+  final prefs = await SharedPreferences.getInstance();
+  final onboardingSeen = prefs.getBool(kOnboardingSeenKey) ?? false;
+  runApp(
+    ProviderScope(
+      overrides: [
+        onboardingSeenProvider
+            .overrideWith((ref) => OnboardingController(seed: onboardingSeen)),
+      ],
+      child: const HrvTrainerApp(),
+    ),
+  );
 }
 
 class HrvTrainerApp extends ConsumerStatefulWidget {
@@ -96,7 +111,7 @@ class _HrvTrainerAppState extends ConsumerState<HrvTrainerApp>
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
-      routerConfig: appRouter,
+      routerConfig: ref.watch(routerProvider),
     );
   }
 }
