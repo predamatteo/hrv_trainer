@@ -33,25 +33,39 @@ class BreathingOrb extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final fontSize = (size * 0.12).clamp(16.0, 26.0);
-    return SizedBox(
-      width: size,
-      height: size,
-      child: CustomPaint(
-        painter: _OrbPainter(
-          amplitude: amplitude.clamp(0.0, 1.0),
-          phaseProgress: phaseProgress,
-          inhaleColor: inhaleColor,
-          exhaleColor: exhaleColor,
-        ),
-        child: Center(
-          child: Text(
-            _label(phase),
-            style: TextStyle(
-              fontFamily: 'Figtree',
-              fontSize: fontSize,
-              fontWeight: FontWeight.w600,
-              color: Colors.white,
-              shadows: const [Shadow(color: Color(0x73002A2D), blurRadius: 10, offset: Offset(0, 1))],
+    // Lo screen reader annuncia "Guida al respiro: Inspira/Espira/…"; la sfera
+    // dipinta e l'etichetta interna sono decorative → escluse per non duplicare.
+    return Semantics(
+      label: 'Guida al respiro',
+      value: _label(phase),
+      child: ExcludeSemantics(
+        child: SizedBox(
+          width: size,
+          height: size,
+          child: CustomPaint(
+            painter: _OrbPainter(
+              amplitude: amplitude.clamp(0.0, 1.0),
+              phaseProgress: phaseProgress,
+              inhaleColor: inhaleColor,
+              exhaleColor: exhaleColor,
+            ),
+            child: Center(
+              child: Text(
+                _label(phase),
+                style: TextStyle(
+                  fontFamily: 'Figtree',
+                  fontSize: fontSize,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                  shadows: const [
+                    Shadow(
+                      color: Color(0x73002A2D),
+                      blurRadius: 10,
+                      offset: Offset(0, 1),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
         ),
@@ -60,11 +74,11 @@ class BreathingOrb extends StatelessWidget {
   }
 
   static String _label(BreathingPhase p) => switch (p) {
-        BreathingPhase.inhale => 'Inspira',
-        BreathingPhase.exhale => 'Espira',
-        BreathingPhase.holdAfterInhale => 'Trattieni',
-        BreathingPhase.holdAfterExhale => 'Pausa',
-      };
+    BreathingPhase.inhale => 'Inspira',
+    BreathingPhase.exhale => 'Espira',
+    BreathingPhase.holdAfterInhale => 'Trattieni',
+    BreathingPhase.holdAfterExhale => 'Pausa',
+  };
 }
 
 class _OrbPainter extends CustomPainter {
@@ -114,7 +128,13 @@ class _OrbPainter extends CustomPainter {
       ..color = inhaleColor;
     final sweep = phaseProgress.clamp(0.0, 1.0) * 2 * math.pi;
     if (sweep > 0) {
-      canvas.drawArc(Rect.fromCircle(center: c, radius: trackR), -math.pi / 2, sweep, false, arc);
+      canvas.drawArc(
+        Rect.fromCircle(center: c, radius: trackR),
+        -math.pi / 2,
+        sweep,
+        false,
+        arc,
+      );
     }
 
     // Sfera con gradiente inspira (alto) → espira (basso).
