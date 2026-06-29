@@ -101,6 +101,14 @@ class _Body extends StatelessWidget {
             Expanded(child: Text('Andamento HRV', style: text.headlineSmall)),
           ],
         ),
+        const SizedBox(height: 14),
+        // Spiegazione in lingua-utente: la vista cronica è dove un non-esperto
+        // si perde. Frame: autoconfronto, tendenza > valore del giorno.
+        const Callout(
+          text: 'Qui guardi la tua tendenza nel tempo, non il valore di oggi. '
+              'Conta il confronto con il tuo solito: una linea che sale piano, '
+              'settimana dopo settimana, è il progresso vero.',
+        ),
         const SizedBox(height: 18),
         const _GeneralStatusCard(),
         const SizedBox(height: 20),
