@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -6,6 +8,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import '../../core/theme/app_tokens.dart';
 import '../../shared/hrv/breathing_pacer.dart';
 import '../../shared/ui/ui.dart';
+import 'state/breath_session_recorder.dart';
 import 'state/pacer_controller.dart';
 import 'widgets/breathing_orb.dart';
 
@@ -23,23 +26,49 @@ class PacerScreen extends ConsumerStatefulWidget {
 class _PacerScreenState extends ConsumerState<PacerScreen> {
   bool _running = false;
 
+  /// Istante d'inizio del respiro (primo start). Usato per persistere la
+  /// sessione all'uscita; null finché il pacer non è partito.
+  DateTime? _startedAt;
+
   @override
   void initState() {
     super.initState();
     WakelockPlus.enable();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(pacerControllerProvider.notifier).start();
+      _startedAt = DateTime.now();
       if (mounted) setState(() => _running = true);
     });
   }
 
   @override
   void dispose() {
+    // Tempo respirato (Stopwatch del controller, esclude le pause) catturato
+    // PRIMA di fermare: è la durata della sessione persistita.
+    final elapsedSec = ref.read(pacerControllerProvider).elapsedSec;
     // Controller non-autoDispose: va fermato a mano uscendo, altrimenti il
     // Timer (e le vibrazioni) continuerebbero in background.
     ref.read(pacerControllerProvider.notifier).pause();
     WakelockPlus.disable();
+    _recordSession(elapsedSec);
     super.dispose();
+  }
+
+  /// Persiste la sessione di respiro (durata + pattern) così lascia traccia in
+  /// storico e cronaca /hrv. Una sola volta, all'uscita (lo Stop fa pop → qui);
+  /// il recorder salta da sé le sessioni troppo brevi.
+  void _recordSession(double elapsedSec) {
+    final startedAt = _startedAt;
+    if (startedAt == null) return;
+    final endedAt =
+        startedAt.add(Duration(milliseconds: (elapsedSec * 1000).round()));
+    unawaited(
+      ref.read(breathSessionRecorderProvider).record(
+            startedAt: startedAt,
+            endedAt: endedAt,
+            pattern: ref.read(pacerPreferencesProvider).pattern,
+          ),
+    );
   }
 
   void _toggle() {
