@@ -111,7 +111,15 @@ class HistoryScreen extends ConsumerWidget {
                 loading: () => const Center(child: CircularProgressIndicator()),
                 error: (e, _) => Center(child: Text('Errore: $e')),
                 data: (list) => list.isEmpty
-                    ? const _EmptyState()
+                    ? const Center(
+                        child: Padding(
+                          padding: EdgeInsets.all(32),
+                          child: EmptyState(
+                            icon: Icons.inbox_outlined,
+                            message: 'Nessuna sessione nel periodo selezionato',
+                          ),
+                        ),
+                      )
                     : _HistoryBody(sessions: list),
               ),
             ),
@@ -662,25 +670,6 @@ class _CustomDaysDialogState extends State<_CustomDaysDialog> {
       ],
     );
   }
-}
-
-class _EmptyState extends StatelessWidget {
-  const _EmptyState();
-  @override
-  Widget build(BuildContext context) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.inbox_outlined,
-                  size: 64, color: Theme.of(context).colorScheme.outline),
-              const SizedBox(height: 12),
-              const Text('Nessuna sessione nel periodo selezionato'),
-            ],
-          ),
-        ),
-      );
 }
 
 /// Corpo dello Storico = il REGISTRO: due statistiche di riepilogo + elenco

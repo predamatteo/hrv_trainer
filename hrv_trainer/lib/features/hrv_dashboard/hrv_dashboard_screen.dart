@@ -75,7 +75,15 @@ class _Body extends StatelessWidget {
     final text = Theme.of(context).textTheme;
 
     if (sessions.isEmpty) {
-      return const _ScrollableMessage(child: _EmptyState());
+      return const _ScrollableMessage(
+        child: EmptyState(
+          icon: Icons.insights,
+          message:
+              'Nessuna sessione negli ultimi $kHrvDashboardWindowDays giorni.\n'
+              'Registra qualche allenamento e check-in mattutino: qui vedrai '
+              'come si evolve la tua HRV nel tempo.',
+        ),
+      );
     }
 
     // Grafici cronici: ordine cronologico (vecchie → recenti); il provider
@@ -752,26 +760,3 @@ class _ScrollableMessage extends StatelessWidget {
   }
 }
 
-class _EmptyState extends StatelessWidget {
-  const _EmptyState();
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    final text = Theme.of(context).textTheme;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(Icons.insights, size: 64, color: t.faint),
-        const SizedBox(height: 12),
-        Text(
-          'Nessuna sessione negli ultimi $kHrvDashboardWindowDays giorni.\n'
-          'Registra qualche allenamento e check-in mattutino: qui vedrai '
-          'come si evolve la tua HRV nel tempo.',
-          textAlign: TextAlign.center,
-          style: text.bodyMedium?.copyWith(color: t.dim, height: 1.4),
-        ),
-      ],
-    );
-  }
-}
