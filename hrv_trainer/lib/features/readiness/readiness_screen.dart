@@ -142,6 +142,22 @@ class _HeroCard extends StatelessWidget {
                   const SizedBox(height: 6),
                   _CvRow(readiness: readiness),
                 ],
+                // Confidence esposta (#5b): la lettura del giorno è una stima a
+                // respiro spontaneo, intrinsecamente rumorosa su questo hardware.
+                // Spostiamo l'attenzione dell'utente sulla TENDENZA, non sul
+                // valore del singolo giorno (anti-ansia, autoconfronto).
+                if (!isUnknown) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    'È una stima del giorno, a respiro spontaneo: naturalmente '
+                    'rumorosa. Conta soprattutto la tendenza qui sotto, non il '
+                    'singolo valore.',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
                 if (readiness.vagalSaturation) ...[
                   const SizedBox(height: 10),
                   _VagalNote(color: color),
