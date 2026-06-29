@@ -132,11 +132,14 @@ class _ReadinessHero extends StatelessWidget {
     final text = Theme.of(context).textTheme;
     final r = readiness;
 
-    final (tone, color, badge) = switch (r.band) {
-      ReadinessBand.green => (PillTone.good, t.good, 'Pronto per oggi'),
-      ReadinessBand.yellow => (PillTone.warn, t.warn, 'Attenzione al carico'),
-      ReadinessBand.red => (PillTone.alert, t.alert, 'Recupero prioritario'),
-      ReadinessBand.unknown => (PillTone.primary, t.primary, 'Baseline in costruzione'),
+    // Semaforo demotato (anti-ansia): un piccolo Dot colore-banda su pillola
+    // neutra come unico segnale, niente pillola colorata allarmante. Lo stato
+    // calmo vive nell'headline (r.headline), il colore resta sull'anello HRV.
+    final color = switch (r.band) {
+      ReadinessBand.green => t.good,
+      ReadinessBand.yellow => t.warn,
+      ReadinessBand.red => t.alert,
+      ReadinessBand.unknown => t.primary,
     };
 
     final isUnknown = r.band == ReadinessBand.unknown;
@@ -168,7 +171,7 @@ class _ReadinessHero extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Pill(tone: tone, leading: Dot(color), label: badge),
+                    Pill(tone: PillTone.neutral, leading: Dot(color), label: 'Prontezza di oggi'),
                     const SizedBox(height: 14),
                     Text(r.headline, style: text.titleLarge),
                     const SizedBox(height: 6),
