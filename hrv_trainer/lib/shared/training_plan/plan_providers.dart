@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../storage/session_repository.dart';
+import 'plan_models.dart';
 
 /// Oltre questo orizzonte (giorni) la frequenza di risonanza misurata è
 /// considerata "vecchia": può essersi spostata con l'allenamento, quindi il
@@ -56,3 +57,135 @@ final assessmentGateProvider =
   final age = DateTime.now().difference(a.takenAt).inDays;
   return AssessmentGate(bpm: a.bpm, takenAt: a.takenAt, ageDays: age);
 });
+
+// ===== Piano attivo + progresso ==============================================
+
+/// Il piano attivo corrente (al più uno), oppure null. autoDispose così si
+/// aggiorna rientrando nelle schermate; invalidato esplicitamente dal
+/// PlanController ad ogni cambiamento.
+final activePlanProvider =
+    FutureProvider.autoDispose<TrainingPlan?>((ref) async {
+  final repo = ref.watch(sessionRepositoryProvider);
+  return repo.getActivePlan();
+});
+
+/// Stato derivato del piano attivo (livello, finestra, aderenza, traguardo),
+/// calcolato dal motore puro sulle sessioni completate del piano. null se non
+/// c'è un piano attivo.
+final planProgressProvider =
+    FutureProvider.autoDispose<PlanProgress?>((ref) async {
+  final plan = await ref.watch(activePlanProvider.future);
+  if (plan == null || plan.id == null) return null;
+  final repo = ref.watch(sessionRepositoryProvider);
+  final times = await repo.planSessionTimes(plan.id!);
+  return computePlanProgress(plan, times, DateTime.now());
+});
+
+/// Costruisce la scaletta di default, opzionalmente sovrascrivendo il numero di
+/// sessioni-obiettivo settimanale con la scelta dell'utente (clamp 3..7). La
+/// progressione delle durate resta invariata.
+List<PlanWeek> buildPlanLadder({int? sessionsPerWeek}) {
+  if (sessionsPerWeek == null) return kDefaultPlanLadder;
+  final n = sessionsPerWeek.clamp(3, 7);
+  return kDefaultPlanLadder
+      .map((w) => w.copyWith(targetSessions: n))
+      .toList(growable: false);
+}
+
+/// Orchestratore del ciclo di vita del piano. Lo stato vive nel DB; il
+/// controller espone i comandi e invalida i provider Future al cambiamento.
+class PlanController {
+  PlanController(this._ref);
+  final Ref _ref;
+
+  SessionRepository get _repo => _ref.read(sessionRepositoryProvider);
+
+  void _invalidate() {
+    _ref.invalidate(activePlanProvider);
+    _ref.invalidate(planProgressProvider);
+  }
+
+  /// Crea (e attiva) un nuovo piano, abbandonando l'eventuale piano attivo
+  /// precedente: ne esiste al più uno. Ritorna il piano salvato (con id).
+  Future<TrainingPlan> createPlan({
+    required PlanGoal goal,
+    required double resonanceBpm,
+    String? implementationIntention,
+    int? reminderMinuteOfDay,
+    int? sessionsPerWeek,
+    DateTime? now,
+  }) async {
+    final existing = await _repo.getActivePlan();
+    if (existing != null) {
+      await _repo.updatePlan(
+          existing.copyWith(status: PlanStatus.abandoned, endedAt: now));
+    }
+    final created = now ?? DateTime.now();
+    final plan = TrainingPlan(
+      goal: goal,
+      createdAt: created,
+      startedAt: created,
+      ladder: buildPlanLadder(sessionsPerWeek: sessionsPerWeek),
+      resonanceBpm: resonanceBpm,
+      implementationIntention: implementationIntention,
+      reminderMinuteOfDay: reminderMinuteOfDay,
+    );
+    final id = await _repo.savePlan(plan);
+    _invalidate();
+    return plan.copyWith(id: id);
+  }
+
+  /// Abbandona il piano attivo (interruzione volontaria dell'utente).
+  Future<void> abandonActivePlan({DateTime? now}) async {
+    final active = await _repo.getActivePlan();
+    if (active == null) return;
+    await _repo.updatePlan(
+        active.copyWith(status: PlanStatus.abandoned, endedAt: now));
+    _invalidate();
+  }
+
+  /// Aggiorna i metadati "soft" del piano attivo (intention/promemoria) senza
+  /// toccarne lo stato.
+  Future<void> updateActivePlanSettings({
+    String? implementationIntention,
+    int? reminderMinuteOfDay,
+    bool clearReminder = false,
+  }) async {
+    final active = await _repo.getActivePlan();
+    if (active == null) return;
+    await _repo.updatePlan(active.copyWith(
+      implementationIntention: implementationIntention,
+      reminderMinuteOfDay: reminderMinuteOfDay,
+      clearReminder: clearReminder,
+    ));
+    _invalidate();
+  }
+
+  /// Da chiamare dopo aver salvato una sessione del piano: ricalcola il
+  /// progresso e, se è stato raggiunto il traguardo, marca il piano come
+  /// completato (pronto per la ri-valutazione "diploma"). Ritorna true se il
+  /// piano è appena passato a completato. Idempotente.
+  Future<bool> onPlanSessionSaved({DateTime? now}) async {
+    final active = await _repo.getActivePlan();
+    if (active == null || active.id == null) {
+      _invalidate();
+      return false;
+    }
+    final times = await _repo.planSessionTimes(active.id!);
+    final progress =
+        computePlanProgress(active, times, now ?? DateTime.now());
+    var graduated = false;
+    if (progress.reachedGraduation && active.status == PlanStatus.active) {
+      await _repo.updatePlan(active.copyWith(
+        status: PlanStatus.completed,
+        endedAt: now ?? DateTime.now(),
+      ));
+      graduated = true;
+    }
+    _invalidate();
+    return graduated;
+  }
+}
+
+final planControllerProvider =
+    Provider<PlanController>((ref) => PlanController(ref));
