@@ -538,8 +538,8 @@ class _TodayCta extends StatelessWidget {
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
-              onPressed: () =>
-                  context.push('/training?tag=${plan.goal.sessionTag.name}'),
+              onPressed: () => context.push(
+                  planTrainingLocation(plan, progress.recommendedDurationMin)),
               icon: const Icon(Icons.play_arrow_rounded, size: 20),
               label: const Text('Inizia'),
             ),

@@ -197,3 +197,12 @@ class PlanController {
 
 final planControllerProvider =
     Provider<PlanController>((ref) => PlanController(ref));
+
+/// Location go_router per avviare la sessione di oggi DAL PIANO: porta tag,
+/// planId, durata consigliata (minuti) e frequenza di risonanza, così la
+/// schermata di training si pre-compila e marca la sessione col piano.
+String planTrainingLocation(TrainingPlan plan, int durationMin) =>
+    '/training?tag=${plan.goal.sessionTag.name}'
+    '&planId=${plan.id}'
+    '&dur=$durationMin'
+    '&bpm=${plan.resonanceBpm}';

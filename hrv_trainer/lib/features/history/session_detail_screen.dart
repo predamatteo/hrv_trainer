@@ -14,6 +14,7 @@ import '../../shared/hrv/morning_reading.dart';
 import '../../shared/hrv/rr_interval.dart';
 import '../../shared/hrv/session_models.dart';
 import '../../shared/storage/session_repository.dart';
+import '../../shared/training_plan/post_session_report.dart';
 import '../../shared/ui/ui.dart';
 import '../home/state/readiness_provider.dart';
 import 'history_screen.dart' show sessionsListProvider;
@@ -148,11 +149,86 @@ class _DetailBody extends StatelessWidget {
           const SizedBox(height: 12),
           const _NoHrvNote(),
         ],
+        if (s.report != null && !s.report!.isEmpty) ...[
+          const SizedBox(height: 12),
+          _ReportCard(report: s.report!),
+        ],
         if (s.notes != null && s.notes!.isNotEmpty) ...[
           const SizedBox(height: 12),
           _NotesCard(notes: s.notes!),
         ],
       ],
+    );
+  }
+}
+
+/// Report soggettivo della sessione (sessioni del piano): Δ calma + umore +
+/// sensazioni + nota. È la parte "tracciata" che l'utente compila a fine
+/// sessione, mostrata accanto ai dati oggettivi.
+class _ReportCard extends StatelessWidget {
+  final PostSessionReport report;
+  const _ReportCard({required this.report});
+
+  static const _moodEmoji = ['😣', '🙁', '😐', '🙂', '😄'];
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final t = context.tokens;
+    final delta = report.calmDelta;
+    final mood = report.mood;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Come ti sei sentito', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                if (delta != null)
+                  Pill(
+                    tone: delta >= 0 ? PillTone.good : PillTone.warn,
+                    icon: delta >= 0
+                        ? Icons.trending_up
+                        : Icons.trending_down,
+                    label: 'Calma ${delta >= 0 ? '+' : ''}$delta',
+                  ),
+                if (report.calmPost != null)
+                  Pill(label: 'Calma ${report.calmPost}/10'),
+                if (mood != null && mood >= 1 && mood <= 5)
+                  Text(_moodEmoji[mood - 1],
+                      style: const TextStyle(fontSize: 22)),
+              ],
+            ),
+            if (report.sensations.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final s in report.sensations)
+                    Pill(
+                      dense: true,
+                      tone: s.isPositive ? PillTone.good : PillTone.warn,
+                      label: s.label,
+                    ),
+                ],
+              ),
+            ],
+            if (report.note != null && report.note!.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text(report.note!,
+                  style: theme.textTheme.bodyMedium
+                      ?.copyWith(color: t.dim, fontStyle: FontStyle.italic)),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }

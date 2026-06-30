@@ -213,6 +213,19 @@ void main() {
     expect(linked.planId, newPlan!.id);
   });
 
+  test('updateSessionReport allega e azzera il report', () async {
+    final sid = await repo.saveSession(_session(DateTime(2026, 6, 5)), const []);
+    expect((await repo.getSession(sid))!.report, isNull);
+
+    await repo.updateSessionReport(
+        sid, const PostSessionReport(tensionPre: 6, calmPost: 8));
+    expect((await repo.getSession(sid))!.report!.calmDelta, 4); // 8 - (10-6)
+
+    // Un report vuoto azzera la colonna.
+    await repo.updateSessionReport(sid, const PostSessionReport());
+    expect((await repo.getSession(sid))!.report, isNull);
+  });
+
   test('latestAssessment ritorna bpm + data, null se nessuno', () async {
     expect(await repo.latestAssessment(), isNull);
     await repo.saveAssessment(ResonanceAssessment(

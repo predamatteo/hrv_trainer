@@ -15,12 +15,26 @@ import '../../shared/storage/session_repository.dart';
 import '../../shared/ui/ui.dart';
 import '../pacer/state/pacer_controller.dart';
 import '../pacer/widgets/breathing_orb.dart';
+import '../training_plan/widgets/post_session_report_sheet.dart';
 import 'state/training_controller.dart';
 
 class TrainingScreen extends ConsumerStatefulWidget {
   final SessionTag initialTag;
 
-  const TrainingScreen({super.key, this.initialTag = SessionTag.general});
+  /// Se valorizzati, la sessione è avviata DAL PIANO: pattern e durata sono
+  /// pre-compilati dalla settimana corrente, la sessione viene marcata col
+  /// piano e a fine sessione si apre il report soggettivo.
+  final int? planId;
+  final int? durationMin;
+  final double? resonanceBpm;
+
+  const TrainingScreen({
+    super.key,
+    this.initialTag = SessionTag.general,
+    this.planId,
+    this.durationMin,
+    this.resonanceBpm,
+  });
 
   @override
   ConsumerState<TrainingScreen> createState() => _TrainingScreenState();
@@ -36,6 +50,10 @@ class _TrainingScreenState extends ConsumerState<TrainingScreen>
   double? _resonanceBpm;
   bool _patternTouched = false;
 
+  /// Tensione catturata prima della sessione del piano (per il Δ calma del
+  /// report). null se non è una sessione del piano o se l'utente l'ha saltata.
+  int? _preTension;
+
   /// Mostra/nasconde il grafico RSA durante la sessione (toggle "graphic_eq").
   bool _showChart = true;
 
@@ -50,6 +68,13 @@ class _TrainingScreenState extends ConsumerState<TrainingScreen>
     super.initState();
     _tag = widget.initialTag;
     _applyTagDefaults();
+    // Avvio dal piano: pre-compila respiro e durata dalla settimana corrente.
+    // _patternTouched=true blocca l'override successivo di _loadResonance.
+    if (widget.resonanceBpm != null) {
+      _pattern = BreathingPattern.fromBpm(widget.resonanceBpm!);
+      _patternTouched = true;
+    }
+    if (widget.durationMin != null) _durationMin = widget.durationMin!;
     _loadResonance();
   }
 
@@ -112,13 +137,7 @@ class _TrainingScreenState extends ConsumerState<TrainingScreen>
           return;
         }
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Sessione completata e salvata'),
-            duration: Duration(seconds: 2),
-          ),
-        );
-        context.pushReplacement('/history/session/$id');
+        _onSessionSaved(id);
       }
     });
 
@@ -160,6 +179,28 @@ class _TrainingScreenState extends ConsumerState<TrainingScreen>
         ),
       ),
     );
+  }
+
+  /// Sessione salvata: per le sessioni del piano mostra lo step di report
+  /// soggettivo (allegato alla sessione), poi naviga al dettaglio. Per le altre
+  /// sessioni conferma e basta.
+  Future<void> _onSessionSaved(int id) async {
+    if (widget.planId != null) {
+      final report =
+          await showPostSessionReportSheet(context, preTension: _preTension);
+      if (report != null && !report.isEmpty) {
+        await ref.read(sessionRepositoryProvider).updateSessionReport(id, report);
+      }
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Sessione completata e salvata'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+    if (!mounted) return;
+    context.pushReplacement('/history/session/$id');
   }
 
   Future<void> _onStopPressed() async {
@@ -311,6 +352,14 @@ class _TrainingScreenState extends ConsumerState<TrainingScreen>
   }
 
   Future<void> _onStart() async {
+    // Sessione del piano: cattura la tensione PRIMA di misurare (più valida che
+    // a memoria). È facoltativa — se la salti, il report a fine sessione resta
+    // utile, solo senza il Δ calma.
+    if (widget.planId != null) {
+      final pre = await showPreTensionSheet(context);
+      if (!mounted) return;
+      _preTension = pre;
+    }
     final ready = await ensureWatchReady(context, ref);
     if (!ready || !mounted) return;
     // Aggancia l'orb allo STESSO periodo intero-ms inviato al watch in
@@ -319,9 +368,12 @@ class _TrainingScreenState extends ConsumerState<TrainingScreen>
     final pattern = _pattern.snappedToMs();
     ref.read(pacerPreferencesProvider.notifier).state =
         ref.read(pacerPreferencesProvider).copyWith(pattern: pattern);
-    await ref
-        .read(trainingControllerProvider.notifier)
-        .start(pattern, targetDurationSec: _durationMin * 60, tag: _tag);
+    await ref.read(trainingControllerProvider.notifier).start(
+          pattern,
+          targetDurationSec: _durationMin * 60,
+          tag: _tag,
+          planId: widget.planId,
+        );
   }
 
   IconData _tagIcon(SessionTag t) => switch (t) {

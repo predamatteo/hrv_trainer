@@ -123,7 +123,15 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/training',
         parentNavigatorKey: _rootNavigatorKey,
-        builder: (_, state) => TrainingScreen(initialTag: _tagFromQuery(state)),
+        builder: (_, state) {
+          final q = state.uri.queryParameters;
+          return TrainingScreen(
+            initialTag: _tagFromQuery(state),
+            planId: int.tryParse(q['planId'] ?? ''),
+            durationMin: int.tryParse(q['dur'] ?? ''),
+            resonanceBpm: double.tryParse(q['bpm'] ?? ''),
+          );
+        },
       ),
       GoRoute(
         path: '/pacer',

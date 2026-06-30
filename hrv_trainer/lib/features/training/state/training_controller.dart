@@ -9,8 +9,10 @@ import '../../../shared/hrv/breathing_pacer.dart';
 import '../../../shared/hrv/hrv_metrics.dart';
 import '../../../shared/hrv/rr_interval.dart';
 import '../../../shared/hrv/session_models.dart';
+import '../../../shared/notifications/plan_reminder.dart';
 import '../../../shared/notifications/reminder_settings.dart';
 import '../../../shared/storage/session_repository.dart';
+import '../../../shared/training_plan/plan_providers.dart';
 import '../../history/history_screen.dart' show sessionsListProvider;
 import '../../home/state/readiness_provider.dart';
 import '../../pacer/state/pacer_controller.dart';
@@ -24,6 +26,12 @@ class TrainingState {
   final List<HrTracePoint> hrTrace;
   final HrvMetrics liveMetrics;
   final int targetDurationSec;
+
+  /// Id del piano se la sessione è stata avviata dal piano (CTA "sessione di
+  /// oggi"). Persistito su `plan_id` e usato per aggiornare il progresso del
+  /// piano al salvataggio. null per le sessioni fuori piano.
+  final int? planId;
+
   // Id della sessione appena salvata su DB. Valorizzato in `stop(save:true)`
   // dopo il `repo.saveSession()`, in modo che la UI possa navigare al
   // dettaglio della sessione conclusa invece di tornare in home.
@@ -60,6 +68,7 @@ class TrainingState {
     required this.hrTrace,
     required this.liveMetrics,
     required this.targetDurationSec,
+    this.planId,
     this.lastSessionId,
     this.abortedNoData = false,
     this.connectionLost = false,
@@ -75,6 +84,7 @@ class TrainingState {
     List<HrTracePoint>? hrTrace,
     HrvMetrics? liveMetrics,
     int? targetDurationSec,
+    int? planId,
     int? lastSessionId,
     bool? abortedNoData,
     bool? connectionLost,
@@ -88,6 +98,7 @@ class TrainingState {
     hrTrace: hrTrace ?? this.hrTrace,
     liveMetrics: liveMetrics ?? this.liveMetrics,
     targetDurationSec: targetDurationSec ?? this.targetDurationSec,
+    planId: planId ?? this.planId,
     lastSessionId: lastSessionId ?? this.lastSessionId,
     abortedNoData: abortedNoData ?? this.abortedNoData,
     connectionLost: connectionLost ?? this.connectionLost,
@@ -169,6 +180,7 @@ class TrainingController extends StateNotifier<TrainingState> {
     BreathingPattern pattern, {
     int targetDurationSec = 20 * 60,
     SessionTag tag = SessionTag.general,
+    int? planId,
   }) async {
     // Reset difensivo di eventuali timer/sub residui da una sessione
     // precedente nello stesso ciclo del controller (raro grazie ad
@@ -207,6 +219,7 @@ class TrainingController extends StateNotifier<TrainingState> {
       hrTrace: const [],
       liveMetrics: HrvMetrics.empty,
       targetDurationSec: targetDurationSec,
+      planId: planId,
     );
     _sub = src.heartRateStream.listen(_onBeat);
     _metricsTimer = Timer.periodic(const Duration(seconds: 5), (_) {
@@ -428,9 +441,20 @@ class TrainingController extends StateNotifier<TrainingState> {
       endedAt: ended,
       pattern: state.pattern,
       metrics: metrics,
+      planId: state.planId,
     );
     final repo = ref.read(sessionRepositoryProvider);
     final id = await repo.saveSession(session, state.samples);
+
+    // Sessione del piano: aggiorna il progresso (e marca il piano completato al
+    // traguardo) e riallinea il promemoria del piano alla durata della nuova
+    // settimana. Fire-and-forget; no-op se non c'è un piano attivo.
+    if (state.planId != null) {
+      unawaited(ref
+          .read(planControllerProvider)
+          .onPlanSessionSaved()
+          .then((_) => ref.read(planReminderControllerProvider).reconcile()));
+    }
 
     // Invalida i provider che leggono dal DB così la home si aggiorna in
     // tempo reale (Morning Readiness card + storico) appena l'utente torna

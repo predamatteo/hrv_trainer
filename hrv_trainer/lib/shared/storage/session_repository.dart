@@ -130,6 +130,22 @@ class SessionRepository {
     return rows.isNotEmpty;
   }
 
+  /// Allega (o aggiorna) il report soggettivo a una sessione già salvata. Usato
+  /// dallo step di report mostrato a fine sessione del piano. Un report vuoto
+  /// azzera la colonna.
+  Future<void> updateSessionReport(int id, PostSessionReport report) async {
+    final db = await _db;
+    await db.update(
+      'sessions',
+      {
+        'post_session_report_json':
+            report.isEmpty ? null : jsonEncode(report.toJson()),
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
   Future<Session?> getSession(int id) async {
     final db = await _db;
     final rows = await db.query('sessions', where: 'id = ?', whereArgs: [id]);

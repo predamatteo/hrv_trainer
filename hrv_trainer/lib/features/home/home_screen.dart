@@ -8,6 +8,8 @@ import '../../shared/connect_iq/watch_readiness.dart';
 import '../../shared/hrv/hrv_metrics.dart';
 import '../../shared/hrv/readiness.dart';
 import '../../shared/profile/user_profile_provider.dart';
+import '../../shared/training_plan/plan_models.dart';
+import '../../shared/training_plan/plan_providers.dart';
 import '../../shared/ui/ui.dart';
 import '../readiness/state/readiness_providers.dart';
 import 'state/readiness_provider.dart';
@@ -74,6 +76,9 @@ class HomeScreen extends ConsumerWidget {
                 ),
                 data: (r) => _ReadinessHero(readiness: r, doneToday: doneToday),
               ),
+              // Sessione del piano di oggi (se c'è un piano attivo che la
+              // raccomanda oggi). Si auto-nasconde altrimenti.
+              const _PlanTodayCard(),
               // Nudge sequenza (#9): finché non c'è una frequenza di risonanza,
               // invita a trovarla (primo passo del percorso). Sparisce una volta
               // fatta. Mostrato solo quando il provider ha risolto a `false`.
@@ -403,6 +408,54 @@ class _PracticeGrid extends StatelessWidget {
           ],
         ),
       ],
+    );
+  }
+}
+
+/// Card "sessione del piano di oggi" in Home: appare solo se c'è un piano
+/// attivo che raccomanda una sessione oggi (finestra non completa, niente già
+/// fatto). Avvia il training pre-compilato dal piano.
+class _PlanTodayCard extends ConsumerWidget {
+  const _PlanTodayCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final plan = ref.watch(activePlanProvider).valueOrNull;
+    final progress = ref.watch(planProgressProvider).valueOrNull;
+    if (plan == null || progress == null || !progress.recommendToday) {
+      return const SizedBox.shrink();
+    }
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: AppCard(
+        onTap: () => context.push(
+            planTrainingLocation(plan, progress.recommendedDurationMin)),
+        color: t.accentTonal,
+        border: Colors.transparent,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: Row(
+          children: [
+            Icon(Icons.calendar_month_rounded, size: 22, color: t.accent),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Sessione del piano di oggi', style: text.titleSmall),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${plan.goal.shortLabel} · circa ${progress.recommendedDurationMin} min',
+                    style: text.bodySmall?.copyWith(color: t.dim),
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.play_circle_fill_rounded, color: t.accent, size: 30),
+          ],
+        ),
+      ),
     );
   }
 }
