@@ -69,6 +69,15 @@ final activePlanProvider =
   return repo.getActivePlan();
 });
 
+/// Timestamp d'inizio delle sessioni completate del piano attivo (per la vista
+/// a calendario). Lista vuota se non c'è un piano attivo.
+final planSessionTimesProvider =
+    FutureProvider.autoDispose<List<DateTime>>((ref) async {
+  final plan = await ref.watch(activePlanProvider.future);
+  if (plan == null || plan.id == null) return const [];
+  return ref.watch(sessionRepositoryProvider).planSessionTimes(plan.id!);
+});
+
 /// Stato derivato del piano attivo (livello, finestra, aderenza, traguardo),
 /// calcolato dal motore puro sulle sessioni completate del piano. null se non
 /// c'è un piano attivo.
@@ -76,8 +85,7 @@ final planProgressProvider =
     FutureProvider.autoDispose<PlanProgress?>((ref) async {
   final plan = await ref.watch(activePlanProvider.future);
   if (plan == null || plan.id == null) return null;
-  final repo = ref.watch(sessionRepositoryProvider);
-  final times = await repo.planSessionTimes(plan.id!);
+  final times = await ref.watch(planSessionTimesProvider.future);
   return computePlanProgress(plan, times, DateTime.now());
 });
 

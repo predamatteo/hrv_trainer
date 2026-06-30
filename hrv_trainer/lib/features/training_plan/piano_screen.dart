@@ -317,6 +317,15 @@ class _ProgressBody extends StatelessWidget {
         _TodayCta(plan: plan, progress: progress),
         const SizedBox(height: 14),
 
+        // Vista a calendario delle settimane del piano.
+        _PlanCalendar(
+          plan: plan,
+          rows: progress.windowIndex + 1 > plan.durationWeeks
+              ? progress.windowIndex + 1
+              : plan.durationWeeks,
+        ),
+        const SizedBox(height: 14),
+
         // Traguardo cumulativo (non si azzera mai).
         AppCard(
           child: Column(
@@ -346,6 +355,145 @@ class _ProgressBody extends StatelessWidget {
             ],
           ),
         ),
+      ],
+    );
+  }
+}
+
+/// Vista a calendario del piano: una riga per settimana (finestre di 7 giorni a
+/// partire dall'inizio del piano, coerenti col motore di progressione), un
+/// pallino pieno nei giorni con una sessione completata. Niente allineamento
+/// Lun–Dom: le settimane scorrono dall'inizio del piano, com'è nell'aderenza.
+class _PlanCalendar extends ConsumerWidget {
+  final TrainingPlan plan;
+  final int rows;
+  const _PlanCalendar({required this.plan, required this.rows});
+
+  static int _key(DateTime d) => d.year * 10000 + d.month * 100 + d.day;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
+    final times = ref.watch(planSessionTimesProvider).valueOrNull ?? const [];
+    final done = {for (final tm in times) _key(tm)};
+    final todayDate = DateUtils.dateOnly(DateTime.now());
+    final todayKey = _key(todayDate);
+    final start = DateUtils.dateOnly(plan.startedAt);
+
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(child: Text('Calendario', style: text.titleSmall)),
+              _LegendDot(color: t.primary, label: 'fatto'),
+            ],
+          ),
+          const SizedBox(height: 12),
+          for (var w = 0; w < rows; w++) ...[
+            if (w > 0) const SizedBox(height: 8),
+            Row(
+              children: [
+                SizedBox(
+                  width: 30,
+                  child: Text('S${w + 1}',
+                      style: text.labelMedium?.copyWith(color: t.faint)),
+                ),
+                for (var d = 0; d < 7; d++)
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 2),
+                      child: _DayCell(
+                        date: DateUtils.addDaysToDate(start, w * 7 + d),
+                        done: done,
+                        todayKey: todayKey,
+                        todayDate: todayDate,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _DayCell extends StatelessWidget {
+  final DateTime date;
+  final Set<int> done;
+  final int todayKey;
+  final DateTime todayDate;
+  const _DayCell({
+    required this.date,
+    required this.done,
+    required this.todayKey,
+    required this.todayDate,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
+    final k = _PlanCalendar._key(date);
+    final isDone = done.contains(k);
+    final isToday = k == todayKey;
+    final isFuture = date.isAfter(todayDate);
+
+    final Color bg;
+    final Color fg;
+    if (isDone) {
+      bg = t.primary;
+      fg = t.onPrimary;
+    } else if (isFuture) {
+      bg = Colors.transparent;
+      fg = t.faint;
+    } else {
+      bg = t.tonal;
+      fg = t.dim;
+    }
+
+    return AspectRatio(
+      aspectRatio: 1,
+      child: Container(
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(9),
+          border: isToday
+              ? Border.all(color: t.primary, width: 2)
+              : (isFuture ? Border.all(color: t.line) : null),
+        ),
+        alignment: Alignment.center,
+        child: Text('${date.day}',
+            style: text.labelMedium?.copyWith(
+                color: fg, fontWeight: isToday ? FontWeight.w700 : null)),
+      ),
+    );
+  }
+}
+
+class _LegendDot extends StatelessWidget {
+  final Color color;
+  final String label;
+  const _LegendDot({required this.color, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(3)),
+        ),
+        const SizedBox(width: 6),
+        Text(label, style: text.labelSmall?.copyWith(color: t.faint)),
       ],
     );
   }
