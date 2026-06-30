@@ -14,6 +14,8 @@ import '../../features/readiness/readiness_screen.dart';
 import '../../features/sessione/sessione_hub_screen.dart';
 import '../../features/settings/settings_screen.dart';
 import '../../features/training/training_screen.dart';
+import '../../features/training_plan/plan_setup_screen.dart';
+import '../../features/training_plan/piano_screen.dart';
 import '../../shared/hrv/session_models.dart';
 import '../../shared/profile/onboarding_provider.dart';
 import 'scaffold_with_nav_bar.dart';
@@ -78,7 +80,19 @@ final routerProvider = Provider<GoRouter>((ref) {
               GoRoute(path: '/sessione', builder: (_, _) => const SessioneHubScreen()),
             ],
           ),
-          // Tab 3 — Storico (+ dettaglio sessione).
+          // Tab 3 — Piano (programma di allenamento + setup).
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/piano',
+                builder: (_, _) => const PianoScreen(),
+                routes: [
+                  GoRoute(path: 'setup', builder: (_, _) => const PlanSetupScreen()),
+                ],
+              ),
+            ],
+          ),
+          // Tab 4 — Storico (+ dettaglio sessione).
           StatefulShellBranch(
             routes: [
               GoRoute(
@@ -94,13 +108,15 @@ final routerProvider = Provider<GoRouter>((ref) {
               ),
             ],
           ),
-          // Tab 4 — Profilo (impostazioni).
-          StatefulShellBranch(
-            routes: [
-              GoRoute(path: '/settings', builder: (_, _) => const SettingsScreen()),
-            ],
-          ),
         ],
+      ),
+
+      // Impostazioni (ex tab Profilo): pagina a sé sul navigator root,
+      // raggiunta dall'icona ingranaggio in alto a destra delle 4 schermate.
+      GoRoute(
+        path: '/settings',
+        parentNavigatorKey: _rootNavigatorKey,
+        builder: (_, _) => const SettingsScreen(),
       ),
 
       // Flussi immersivi: full-screen sul navigator root (nascondono la bottom nav).

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-/// Shell con bottom nav a 4 tab. Renderizza il branch attivo
-/// ([StatefulNavigationShell]) e la [NavigationBar] persistente. I flussi
+/// Shell con bottom nav a 4 tab (Home · Sessione · Piano · Storico).
+/// Renderizza il branch attivo ([StatefulNavigationShell]) e la
+/// [NavigationBar] persistente. Il Profilo è uscito dalla barra: si raggiunge
+/// con l'icona impostazioni in alto a destra (route `/settings` a sé). I flussi
 /// immersivi (sessione, pacer, check-in, assessment) NON passano da qui: sono
 /// route sul navigator root e coprono la barra.
 class ScaffoldWithNavBar extends StatelessWidget {
@@ -37,14 +39,14 @@ class ScaffoldWithNavBar extends StatelessWidget {
             label: 'Sessione',
           ),
           NavigationDestination(
+            icon: Icon(Icons.calendar_month_outlined),
+            selectedIcon: Icon(Icons.calendar_month_rounded),
+            label: 'Piano',
+          ),
+          NavigationDestination(
             icon: Icon(Icons.history_outlined),
             selectedIcon: Icon(Icons.history_rounded),
             label: 'Storico',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.person_outline_rounded),
-            selectedIcon: Icon(Icons.person_rounded),
-            label: 'Profilo',
           ),
         ],
       ),

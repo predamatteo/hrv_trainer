@@ -23,7 +23,12 @@ class SessioneHubScreen extends StatelessWidget {
           children: [
             Padding(
               padding: const EdgeInsets.only(left: 2, bottom: 4),
-              child: Text('Sessione', style: text.headlineSmall),
+              child: Row(
+                children: [
+                  Expanded(child: Text('Sessione', style: text.headlineSmall)),
+                  const SettingsButton(),
+                ],
+              ),
             ),
             Padding(
               padding: const EdgeInsets.only(left: 2, bottom: 18),

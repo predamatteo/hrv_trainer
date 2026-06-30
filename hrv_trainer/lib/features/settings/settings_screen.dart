@@ -26,12 +26,10 @@ class SettingsScreen extends ConsumerWidget {
       body: SafeArea(
         bottom: false,
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 28),
           children: [
-            Padding(
-              padding: const EdgeInsets.only(left: 2, bottom: 18),
-              child: Text('Profilo', style: text.headlineSmall),
-            ),
+            const HeaderBar(title: 'Profilo'),
+            const SizedBox(height: 8),
 
             const SectionHeader(title: 'Il tuo profilo'),
             const AppCard(padding: EdgeInsets.fromLTRB(18, 6, 14, 6), child: _NameField()),

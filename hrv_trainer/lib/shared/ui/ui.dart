@@ -10,4 +10,5 @@ export 'pill.dart';
 export 'practice_card.dart';
 export 'readiness_ring.dart';
 export 'section_header.dart';
+export 'settings_button.dart';
 export 'stat_tile.dart';

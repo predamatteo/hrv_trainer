@@ -61,10 +61,7 @@ class HomeScreen extends ConsumerWidget {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  _CircleIconButton(
-                    icon: Icons.settings_outlined,
-                    onTap: () => context.go('/settings'),
-                  ),
+                  const SettingsButton(),
                 ],
               ),
               const SizedBox(height: 14),
@@ -406,26 +403,6 @@ class _PracticeGrid extends StatelessWidget {
           ],
         ),
       ],
-    );
-  }
-}
-
-class _CircleIconButton extends StatelessWidget {
-  final IconData icon;
-  final VoidCallback onTap;
-  const _CircleIconButton({required this.icon, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    return Material(
-      color: t.tonal,
-      shape: const CircleBorder(),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: SizedBox(width: 44, height: 44, child: Icon(icon, size: 22, color: t.dim)),
-      ),
     );
   }
 }

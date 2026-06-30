@@ -101,6 +101,11 @@ class HistoryScreen extends ConsumerWidget {
                   ),
                   const _SyncWatchAction(),
                   const _BackupMenu(),
+                  IconButton(
+                    tooltip: 'Impostazioni',
+                    icon: const Icon(Icons.settings_outlined),
+                    onPressed: () => context.push('/settings'),
+                  ),
                 ],
               ),
             ),
