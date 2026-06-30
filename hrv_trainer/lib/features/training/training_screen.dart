@@ -583,7 +583,7 @@ class _RunningCountdownState extends ConsumerState<_RunningCountdown> {
   }
 }
 
-/// Card dell'onda RSA: grafico HR live + respiro guida.
+/// Card dell'onda RSA: tachogramma RR live + respiro guida.
 class _RsaCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
