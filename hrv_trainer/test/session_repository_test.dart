@@ -11,6 +11,7 @@ import 'package:hrv_trainer/shared/hrv/rr_interval.dart';
 import 'package:hrv_trainer/shared/hrv/session_models.dart';
 import 'package:hrv_trainer/shared/storage/database.dart';
 import 'package:hrv_trainer/shared/storage/session_repository.dart';
+import 'package:hrv_trainer/shared/training_plan/plan_models.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 final _validMetrics = jsonEncode(HrvMetrics.empty.toJson());
@@ -127,5 +128,100 @@ void main() {
     final s = (await repo.listSessions()).single;
     expect(s.morning, isNull);
     expect(s.tag, SessionTag.morning);
+  });
+
+  // ===== Piano di allenamento (v4) ===========================================
+
+  TrainingPlan makePlan(DateTime created) => TrainingPlan(
+        goal: PlanGoal.calm,
+        createdAt: created,
+        startedAt: created,
+        resonanceBpm: 5.5,
+      );
+
+  test('savePlan / getActivePlan / updatePlan', () async {
+    final id = await repo.savePlan(makePlan(DateTime(2026, 6, 1)));
+    final active = await repo.getActivePlan();
+    expect(active, isNotNull);
+    expect(active!.id, id);
+    expect(active.goal, PlanGoal.calm);
+    expect(active.resonanceBpm, 5.5);
+
+    // Completando il piano non risulta più "attivo".
+    await repo.updatePlan(active.copyWith(status: PlanStatus.completed));
+    expect(await repo.getActivePlan(), isNull);
+    expect((await repo.getPlan(id))!.status, PlanStatus.completed);
+  });
+
+  test('saveSession con planId + report → riletti correttamente', () async {
+    final planId = await repo.savePlan(makePlan(DateTime(2026, 6, 1)));
+    final session = _session(DateTime(2026, 6, 2)).copyWith(
+      planId: planId,
+      report: const PostSessionReport(
+        tensionPre: 7,
+        calmPost: 9,
+        mood: 4,
+        sensations: [BodySensation.slowerBreath],
+        note: 'bene',
+      ),
+    );
+    final sid = await repo.saveSession(session, const []);
+    final back = await repo.getSession(sid);
+    expect(back!.planId, planId);
+    expect(back.report!.calmDelta, 6); // 9 - (10 - 7)
+    expect(back.report!.sensations, [BodySensation.slowerBreath]);
+
+    // planSessionTimes conta solo le sessioni concluse del piano.
+    final times = await repo.planSessionTimes(planId);
+    expect(times.length, 1);
+    expect(times.single, DateTime(2026, 6, 2));
+  });
+
+  test('report vuoto non viene persistito (resta null)', () async {
+    final sid = await repo.saveSession(
+      _session(DateTime(2026, 6, 3)).copyWith(report: const PostSessionReport()),
+      const [],
+    );
+    expect((await repo.getSession(sid))!.report, isNull);
+  });
+
+  test('export/import di un piano → planId delle sessioni ri-mappato', () async {
+    final planId = await repo.savePlan(makePlan(DateTime(2026, 6, 1)));
+    await repo.saveSession(
+      _session(DateTime(2026, 6, 2)).copyWith(planId: planId),
+      const [],
+    );
+    final backup = await repo.exportAll();
+
+    // Re-import sullo stesso DB: piano e sessione già presenti → tutto skippato.
+    final r = await repo.importAll(backup);
+    expect(r.plansSkipped, 1);
+    expect(r.sessionsSkipped, 1);
+
+    // Import su un DB pulito: il piano prende un nuovo id e la sessione vi
+    // resta collegata tramite il re-mapping.
+    await AppDatabase.resetForTest();
+    AppDatabase.testFactory = databaseFactoryFfi;
+    AppDatabase.testPath = '${tmp.path}/test2.db';
+    final repo2 = SessionRepository();
+    final r2 = await repo2.importAll(backup);
+    expect(r2.plansImported, 1);
+    expect(r2.sessionsImported, 1);
+    final newPlan = await repo2.getActivePlan();
+    expect(newPlan, isNotNull);
+    final linked = (await repo2.listSessions()).single;
+    expect(linked.planId, newPlan!.id);
+  });
+
+  test('latestAssessment ritorna bpm + data, null se nessuno', () async {
+    expect(await repo.latestAssessment(), isNull);
+    await repo.saveAssessment(ResonanceAssessment(
+      takenAt: DateTime(2026, 6, 1, 8),
+      steps: const [],
+      resonanceBpm: 5.5,
+    ));
+    final a = await repo.latestAssessment();
+    expect(a!.bpm, 5.5);
+    expect(a.takenAt, DateTime(2026, 6, 1, 8));
   });
 }

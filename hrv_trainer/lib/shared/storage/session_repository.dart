@@ -10,6 +10,7 @@ import '../hrv/hrv_metrics.dart';
 import '../hrv/morning_reading.dart';
 import '../hrv/rr_interval.dart';
 import '../hrv/session_models.dart';
+import '../training_plan/plan_models.dart';
 import 'database.dart';
 
 class SessionRepository {
@@ -28,6 +29,10 @@ class SessionRepository {
         'notes': s.notes,
         'morning_meta_json':
             s.morning == null ? null : jsonEncode(s.morning!.toJson()),
+        'plan_id': s.planId,
+        'post_session_report_json': s.report == null || s.report!.isEmpty
+            ? null
+            : jsonEncode(s.report!.toJson()),
       });
       final batch = txn.batch();
       for (final rr in samples) {
@@ -200,6 +205,19 @@ class SessionRepository {
         morning = null;
       }
     }
+    // post_session_report_json può mancare (colonna assente in DB pre-v4, o NULL
+    // se l'utente ha saltato il report): in quei casi report resta null. Una
+    // riga corrotta non deve far crashare la lettura → fallback a null.
+    final reportRaw = row['post_session_report_json'] as String?;
+    PostSessionReport? report;
+    if (reportRaw != null && reportRaw.isNotEmpty) {
+      try {
+        report = PostSessionReport.fromJson(
+            jsonDecode(reportRaw) as Map<String, dynamic>);
+      } catch (_) {
+        report = null;
+      }
+    }
     // pattern_json / metrics_json sono JSON liberi e possono arrivare corrotti
     // da un backup editato a mano (l'export incoraggia esplicitamente
     // l'ispezione manuale). Una singola riga avvelenata NON deve far crashare
@@ -223,6 +241,8 @@ class SessionRepository {
       metrics: _decodeMetrics(row['metrics_json'], id),
       notes: row['notes'] as String?,
       morning: morning,
+      planId: row['plan_id'] as int?,
+      report: report,
     );
   }
 
@@ -279,13 +299,125 @@ class SessionRepository {
     return rows.first['resonance_bpm'] as double?;
   }
 
+  /// Ultimo assessment con la sua data: serve al gate del piano, che richiede
+  /// una valutazione *recente* (la frequenza di risonanza può spostarsi con
+  /// l'allenamento). `bpm` può essere null se l'assessment non ha prodotto una
+  /// risonanza valida (dati insufficienti). null se non esiste alcun assessment.
+  Future<({double? bpm, DateTime takenAt})?> latestAssessment() async {
+    final db = await _db;
+    final rows = await db.query(
+      'assessments',
+      columns: ['resonance_bpm', 'taken_at'],
+      orderBy: 'taken_at DESC',
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return (
+      bpm: rows.first['resonance_bpm'] as double?,
+      takenAt:
+          DateTime.fromMillisecondsSinceEpoch(rows.first['taken_at'] as int),
+    );
+  }
+
+  // ===== Piano di allenamento (DB v4) ==========================================
+
+  Future<int> savePlan(TrainingPlan plan) async {
+    final db = await _db;
+    return db.insert('training_plans', {
+      'status': plan.status.name,
+      'created_at': plan.createdAt.millisecondsSinceEpoch,
+      'plan_json': jsonEncode(plan.toJson()),
+    });
+  }
+
+  Future<void> updatePlan(TrainingPlan plan) async {
+    if (plan.id == null) return;
+    final db = await _db;
+    await db.update(
+      'training_plans',
+      {
+        'status': plan.status.name,
+        'plan_json': jsonEncode(plan.toJson()),
+      },
+      where: 'id = ?',
+      whereArgs: [plan.id],
+    );
+  }
+
+  TrainingPlan? _rowToPlan(Map<String, Object?> row) {
+    final id = row['id'] as int;
+    try {
+      final j = jsonDecode(row['plan_json'] as String) as Map<String, dynamic>;
+      return TrainingPlan.fromJson(j, id: id);
+    } catch (e) {
+      developer.log('plan_json corrotto per piano $id: $e',
+          name: 'SessionRepository');
+      return null;
+    }
+  }
+
+  /// Il piano attivo corrente (al più uno). null se nessuno.
+  Future<TrainingPlan?> getActivePlan() async {
+    final db = await _db;
+    final rows = await db.query(
+      'training_plans',
+      where: 'status = ?',
+      whereArgs: [PlanStatus.active.name],
+      orderBy: 'created_at DESC',
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return _rowToPlan(rows.first);
+  }
+
+  Future<TrainingPlan?> getPlan(int id) async {
+    final db = await _db;
+    final rows =
+        await db.query('training_plans', where: 'id = ?', whereArgs: [id]);
+    if (rows.isEmpty) return null;
+    return _rowToPlan(rows.first);
+  }
+
+  Future<List<TrainingPlan>> listPlans({int limit = 20}) async {
+    final db = await _db;
+    final rows = await db.query('training_plans',
+        orderBy: 'created_at DESC', limit: limit);
+    return rows
+        .map(_rowToPlan)
+        .whereType<TrainingPlan>()
+        .toList(growable: false);
+  }
+
+  /// Timestamp d'inizio delle sessioni completate appartenenti a [planId]
+  /// (kind training/freestyle con un `ended_at`): è l'input del motore di
+  /// progressione. Una sessione conta solo se conclusa.
+  Future<List<DateTime>> planSessionTimes(int planId) async {
+    final db = await _db;
+    final rows = await db.query(
+      'sessions',
+      columns: ['started_at'],
+      where: 'plan_id = ? AND ended_at IS NOT NULL',
+      whereArgs: [planId],
+      orderBy: 'started_at ASC',
+    );
+    return [
+      for (final r in rows)
+        DateTime.fromMillisecondsSinceEpoch(r['started_at'] as int),
+    ];
+  }
+
   /// Schema corrente del file di backup. Bumppare ad ogni breaking change
   /// del formato (rinomina campi DB, rimozione enum value, ecc.).
   ///
   /// v2: aggiunto `morningMetaJson` per le letture Morning Readiness. Additivo
   /// e retro-compatibile — i backup v1 (senza il campo) si importano
   /// regolarmente con morning=null.
-  static const exportSchemaVersion = 2;
+  ///
+  /// v3: aggiunti i `plans` (piani di allenamento) e, su ogni sessione,
+  /// `planId` + `postSessionReportJson`. Additivo: i backup v1/v2 (senza questi
+  /// campi) si importano con plan/report a null. Su import il `planId` delle
+  /// sessioni viene ri-mappato sui nuovi id dei piani inseriti.
+  static const exportSchemaVersion = 3;
 
   /// Serializza l'intero storico (sessioni + RR samples + assessments) in
   /// JSON pronto per condivisione tramite share sheet.
@@ -308,6 +440,8 @@ class SessionRepository {
     }
 
     final assRows = await db.query('assessments', orderBy: 'taken_at ASC');
+    final planRows =
+        await db.query('training_plans', orderBy: 'created_at ASC');
 
     final sessions = sessRows.map((s) {
       final id = s['id'] as int;
@@ -323,6 +457,8 @@ class SessionRepository {
         'metricsJson': s['metrics_json'],
         'notes': s['notes'],
         'morningMetaJson': s['morning_meta_json'],
+        'planId': s['plan_id'],
+        'postSessionReportJson': s['post_session_report_json'],
         'rrSamples': rrBySession[id] ?? const <Map<String, Object?>>[],
       };
     }).toList();
@@ -334,11 +470,21 @@ class SessionRepository {
           'stepsJson': a['steps_json'],
         }).toList();
 
+    // Esportiamo l'id originale del piano per poter ri-mappare il planId delle
+    // sessioni in import (gli id auto-increment cambiano su un altro DB).
+    final plans = planRows.map((pl) => {
+          'id': pl['id'],
+          'status': pl['status'],
+          'createdAt': pl['created_at'],
+          'planJson': pl['plan_json'],
+        }).toList();
+
     return {
       'schemaVersion': exportSchemaVersion,
       'exportedAt': DateTime.now().toUtc().toIso8601String(),
       'sessions': sessions,
       'assessments': assessments,
+      'plans': plans,
     };
   }
 
@@ -360,6 +506,7 @@ class SessionRepository {
 
     final sessions = (data['sessions'] as List?) ?? const [];
     final assessments = (data['assessments'] as List?) ?? const [];
+    final plans = (data['plans'] as List?) ?? const [];
 
     var sessImported = 0;
     var sessSkipped = 0;
@@ -367,9 +514,52 @@ class SessionRepository {
     var assImported = 0;
     var assSkipped = 0;
     var assInvalid = 0;
+    var planImported = 0;
+    var planSkipped = 0;
+    var planInvalid = 0;
 
     final db = await _db;
     await db.transaction((txn) async {
+      // I piani vanno importati PRIMA delle sessioni: serve la mappa
+      // oldPlanId→newPlanId per ri-mappare il `planId` delle sessioni (gli id
+      // auto-increment differiscono su un altro DB). Dedup su createdAt.
+      final planIdMap = <int, int>{};
+      for (final raw in plans) {
+        if (raw is! Map) {
+          planInvalid++;
+          continue;
+        }
+        final pl = raw.cast<String, dynamic>();
+        final createdAt = pl['createdAt'];
+        final planJson = pl['planJson'];
+        if (createdAt is! int ||
+            planJson is! String ||
+            !_isDecodablePlan(planJson)) {
+          planInvalid++;
+          continue;
+        }
+        final oldId = pl['id'] is int ? pl['id'] as int : null;
+        final dup = await txn.query(
+          'training_plans',
+          columns: ['id'],
+          where: 'created_at = ?',
+          whereArgs: [createdAt],
+          limit: 1,
+        );
+        if (dup.isNotEmpty) {
+          if (oldId != null) planIdMap[oldId] = dup.first['id'] as int;
+          planSkipped++;
+          continue;
+        }
+        final newId = await txn.insert('training_plans', {
+          'status': pl['status'] is String ? pl['status'] : 'active',
+          'created_at': createdAt,
+          'plan_json': planJson,
+        });
+        if (oldId != null) planIdMap[oldId] = newId;
+        planImported++;
+      }
+
       for (final raw in sessions) {
         // Validazione difensiva prima di scrivere: un backup può essere editato
         // a mano (l'export lo incoraggia). Un record con campi mancanti/di tipo
@@ -409,6 +599,12 @@ class SessionRepository {
           continue;
         }
 
+        // planId del backup ri-mappato sul nuovo id del piano; null se il piano
+        // non è stato importato (backup v1/v2, o piano scartato).
+        final rawPlanId = s['planId'];
+        final mappedPlanId =
+            rawPlanId is int ? planIdMap[rawPlanId] : null;
+
         final id = await txn.insert('sessions', {
           'kind': kind,
           'tag': s['tag'] is String ? s['tag'] : 'general',
@@ -420,6 +616,10 @@ class SessionRepository {
           // null per backup v1 (campo assente) → import retro-compatibile.
           'morning_meta_json':
               s['morningMetaJson'] is String ? s['morningMetaJson'] : null,
+          'plan_id': mappedPlanId,
+          'post_session_report_json': s['postSessionReportJson'] is String
+              ? s['postSessionReportJson']
+              : null,
         });
 
         final rrRaw = s['rrSamples'];
@@ -482,7 +682,21 @@ class SessionRepository {
       assessmentsImported: assImported,
       assessmentsSkipped: assSkipped,
       assessmentsInvalid: assInvalid,
+      plansImported: planImported,
+      plansSkipped: planSkipped,
+      plansInvalid: planInvalid,
     );
+  }
+
+  /// Prova a decodificare il JSON di un piano importato: se non è valido il
+  /// record va scartato, non scritto nel DB.
+  bool _isDecodablePlan(String planJson) {
+    try {
+      TrainingPlan.fromJson(jsonDecode(planJson) as Map<String, dynamic>);
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// Prova a decodificare pattern e metrics di una sessione importata: se uno
@@ -506,6 +720,9 @@ class ImportResult {
   final int assessmentsImported;
   final int assessmentsSkipped;
   final int assessmentsInvalid;
+  final int plansImported;
+  final int plansSkipped;
+  final int plansInvalid;
   final String? error;
 
   const ImportResult({
@@ -515,13 +732,17 @@ class ImportResult {
     this.assessmentsImported = 0,
     this.assessmentsSkipped = 0,
     this.assessmentsInvalid = 0,
+    this.plansImported = 0,
+    this.plansSkipped = 0,
+    this.plansInvalid = 0,
     this.error,
   });
 
   bool get isError => error != null;
-  int get totalImported => sessionsImported + assessmentsImported;
-  int get totalSkipped => sessionsSkipped + assessmentsSkipped;
-  int get totalInvalid => sessionsInvalid + assessmentsInvalid;
+  int get totalImported =>
+      sessionsImported + assessmentsImported + plansImported;
+  int get totalSkipped => sessionsSkipped + assessmentsSkipped + plansSkipped;
+  int get totalInvalid => sessionsInvalid + assessmentsInvalid + plansInvalid;
 }
 
 final sessionRepositoryProvider =

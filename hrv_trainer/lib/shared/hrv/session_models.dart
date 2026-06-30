@@ -1,3 +1,4 @@
+import '../training_plan/post_session_report.dart';
 import 'breathing_pacer.dart';
 import 'hrv_metrics.dart';
 import 'morning_reading.dart';
@@ -104,6 +105,16 @@ class Session {
   /// nella colonna `morning_meta_json` (DB v3).
   final MorningMeta? morning;
 
+  /// Id del piano di allenamento a cui questa sessione appartiene (se avviata
+  /// dalla CTA "sessione di oggi" del piano). null per le sessioni fuori piano.
+  /// Persistito nella colonna `plan_id` (DB v4).
+  final int? planId;
+
+  /// Report soggettivo post-sessione (tensione/calma/umore/sensazioni). null se
+  /// l'utente l'ha saltato o per le sessioni pre-feature. Persistito nella
+  /// colonna `post_session_report_json` (DB v4).
+  final PostSessionReport? report;
+
   const Session({
     this.id,
     required this.kind,
@@ -114,6 +125,8 @@ class Session {
     required this.metrics,
     this.notes,
     this.morning,
+    this.planId,
+    this.report,
   });
 
   Duration get duration =>
@@ -129,6 +142,8 @@ class Session {
     HrvMetrics? metrics,
     String? notes,
     MorningMeta? morning,
+    int? planId,
+    PostSessionReport? report,
   }) =>
       Session(
         id: id ?? this.id,
@@ -140,6 +155,8 @@ class Session {
         metrics: metrics ?? this.metrics,
         notes: notes ?? this.notes,
         morning: morning ?? this.morning,
+        planId: planId ?? this.planId,
+        report: report ?? this.report,
       );
 }
 

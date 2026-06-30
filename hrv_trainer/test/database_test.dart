@@ -56,7 +56,7 @@ void main() {
     } catch (_) {}
   });
 
-  test('apertura fresca: tabelle a v3 + foreign_keys ON', () async {
+  test('apertura fresca: tabelle a v4 + foreign_keys ON', () async {
     final db = await AppDatabase.instance();
     final fk = await db.rawQuery('PRAGMA foreign_keys');
     expect(fk.first.values.first, 1); // enforcement attivo
@@ -65,12 +65,20 @@ void main() {
             .rawQuery("SELECT name FROM sqlite_master WHERE type='table'"))
         .map((r) => r['name'])
         .toSet();
-    expect(tables, containsAll(['sessions', 'assessments', 'rr_samples']));
+    expect(tables,
+        containsAll(['sessions', 'assessments', 'rr_samples', 'training_plans']));
 
     final cols = (await db.rawQuery('PRAGMA table_info(sessions)'))
         .map((c) => c['name'])
         .toSet();
-    expect(cols, containsAll(['tag', 'morning_meta_json']));
+    expect(
+        cols,
+        containsAll([
+          'tag',
+          'morning_meta_json',
+          'plan_id',
+          'post_session_report_json',
+        ]));
   });
 
   test('ON DELETE CASCADE rimuove i rr_samples cancellando la sessione',
@@ -95,7 +103,7 @@ void main() {
     expect(left, isEmpty);
   });
 
-  test('migrazione v1 -> v3 aggiunge tag e morning_meta_json, dati intatti',
+  test('migrazione v1 -> v4 aggiunge colonne e tabella piani, dati intatti',
       () async {
     final v1 = await _createV1(AppDatabase.testPath!);
     await v1.insert('sessions', {
@@ -106,16 +114,30 @@ void main() {
     });
     await v1.close();
 
-    final db = await AppDatabase.instance(); // onUpgrade(1, 3)
+    final db = await AppDatabase.instance(); // onUpgrade(1, 4)
     final cols = (await db.rawQuery('PRAGMA table_info(sessions)'))
         .map((c) => c['name'])
         .toSet();
-    expect(cols, containsAll(['tag', 'morning_meta_json']));
+    expect(
+        cols,
+        containsAll([
+          'tag',
+          'morning_meta_json',
+          'plan_id',
+          'post_session_report_json',
+        ]));
+
+    final tables = (await db
+            .rawQuery("SELECT name FROM sqlite_master WHERE type='table'"))
+        .map((r) => r['name'])
+        .toSet();
+    expect(tables, contains('training_plans'));
 
     final rows = await db.query('sessions');
     expect(rows.length, 1);
     expect(rows.first['tag'], 'general'); // default applicato dalla migrazione
     expect(rows.first['started_at'], 5000);
+    expect(rows.first['plan_id'], isNull);
   });
 
   test('re-upgrade idempotente: ADD COLUMN non fallisce se la colonna esiste',
@@ -132,11 +154,11 @@ void main() {
     expect(cols, containsAll(['tag', 'morning_meta_json']));
   });
 
-  test('onDowngrade: un DB creato a v4 si apre su v3 senza crash', () async {
-    final v4 = await databaseFactoryFfi.openDatabase(
+  test('onDowngrade: un DB creato a v5 si apre su v4 senza crash', () async {
+    final v5 = await databaseFactoryFfi.openDatabase(
       AppDatabase.testPath!,
       options: OpenDatabaseOptions(
-        version: 4,
+        version: 5,
         onCreate: (db, v) async {
           await db.execute('''
             CREATE TABLE sessions (
@@ -144,7 +166,7 @@ void main() {
               tag TEXT NOT NULL DEFAULT 'general', started_at INTEGER NOT NULL,
               ended_at INTEGER, pattern_json TEXT NOT NULL,
               metrics_json TEXT NOT NULL, notes TEXT, morning_meta_json TEXT,
-              future_col TEXT
+              plan_id INTEGER, post_session_report_json TEXT, future_col TEXT
             )''');
           await db.execute('''
             CREATE TABLE assessments (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -153,18 +175,22 @@ void main() {
           await db.execute('''
             CREATE TABLE rr_samples (session_id INTEGER NOT NULL,
               t INTEGER NOT NULL, ms INTEGER NOT NULL)''');
+          await db.execute('''
+            CREATE TABLE training_plans (id INTEGER PRIMARY KEY AUTOINCREMENT,
+              status TEXT NOT NULL DEFAULT 'active', created_at INTEGER NOT NULL,
+              plan_json TEXT NOT NULL)''');
         },
       ),
     );
-    await v4.insert('sessions', {
+    await v5.insert('sessions', {
       'kind': 'training',
       'started_at': 7000,
       'pattern_json': '{}',
       'metrics_json': '{}',
     });
-    await v4.close();
+    await v5.close();
 
-    // Apertura a v3: onDowngrade no-op, niente crash-loop, dati conservati.
+    // Apertura a v4: onDowngrade no-op, niente crash-loop, dati conservati.
     final db = await AppDatabase.instance();
     final rows = await db.query('sessions');
     expect(rows.length, 1);

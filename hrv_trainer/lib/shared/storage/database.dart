@@ -26,7 +26,7 @@ class AppDatabase {
     _db = await (factory ?? databaseFactory).openDatabase(
       path,
       options: OpenDatabaseOptions(
-        version: 3,
+        version: 4,
       onConfigure: (db) async {
         // SQLite tiene le FOREIGN KEY disabilitate di default: senza questo
         // PRAGMA la `ON DELETE CASCADE` di rr_samples e' decorativa (la cascata
@@ -56,6 +56,26 @@ class AppDatabase {
           // sicura: ADD COLUMN nullable non tocca i dati esistenti.
           await _addColumnIfMissing(db, 'sessions', 'morning_meta_json', 'TEXT');
         }
+        if (oldV < 4) {
+          // Piano di allenamento HRV: tabella piani + due colonne additive su
+          // sessions per collegare una sessione al piano e per il report
+          // soggettivo. Tutto nullable/idempotente: i dati esistenti restano.
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS training_plans (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              status TEXT NOT NULL DEFAULT 'active',
+              created_at INTEGER NOT NULL,
+              plan_json TEXT NOT NULL
+            )
+          ''');
+          // plan_id resta un semplice INTEGER (niente FK a livello DB): la
+          // relazione è gestita in codice, coerente con la cascata manuale di
+          // rr_samples. Una sessione resta nello storico anche se il piano viene
+          // cancellato.
+          await _addColumnIfMissing(db, 'sessions', 'plan_id', 'INTEGER');
+          await _addColumnIfMissing(
+              db, 'sessions', 'post_session_report_json', 'TEXT');
+        }
       },
       onCreate: (db, v) async {
         await db.execute('''
@@ -68,7 +88,9 @@ class AppDatabase {
             pattern_json TEXT NOT NULL,
             metrics_json TEXT NOT NULL,
             notes TEXT,
-            morning_meta_json TEXT
+            morning_meta_json TEXT,
+            plan_id INTEGER,
+            post_session_report_json TEXT
           )
         ''');
         await db.execute(
@@ -94,6 +116,14 @@ class AppDatabase {
         await db.execute(
           'CREATE INDEX idx_rr_session ON rr_samples(session_id, t)',
         );
+        await db.execute('''
+          CREATE TABLE training_plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at INTEGER NOT NULL,
+            plan_json TEXT NOT NULL
+          )
+        ''');
       },
       ),
     );
