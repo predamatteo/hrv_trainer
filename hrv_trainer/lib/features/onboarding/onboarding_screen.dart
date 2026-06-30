@@ -332,16 +332,25 @@ class _BreathStepViewState extends ConsumerState<_BreathStepView> {
       if (!mounted) return;
       setState(() => _remaining--);
       if (_remaining <= 0) {
-        _ticker?.cancel();
-        widget.onDone();
+        _leave(widget.onDone);
       }
     });
   }
 
+  /// Lascia lo step fermando SUBITO il pacer (timer + vibrazione) prima di
+  /// avanzare. Non basta il `pause()` in dispose: con la transizione
+  /// dell'AnimatedSwitcher il dispose arriva ~250ms dopo, lasciando sentire la
+  /// vibrazione "anche dopo lo Salta" (stesso fix del bottone Stop del pacer).
+  void _leave(VoidCallback go) {
+    _ticker?.cancel();
+    ref.read(pacerControllerProvider.notifier).pause();
+    go();
+  }
+
   @override
   void dispose() {
-    // Controller non-autoDispose e condiviso: va fermato a mano uscendo,
-    // altrimenti Timer (e vibrazioni) continuerebbero in background.
+    // Safety net: il controller è condiviso e non-autoDispose, va fermato a mano
+    // uscendo (di norma già fatto da _leave; qui copre il back di sistema).
     ref.read(pacerControllerProvider.notifier).pause();
     WakelockPlus.disable();
     _ticker?.cancel();
@@ -370,7 +379,7 @@ class _BreathStepViewState extends ConsumerState<_BreathStepView> {
         Text('${_remaining}s', style: text.displaySmall),
         const Spacer(),
         TextButton(
-          onPressed: widget.onSkip,
+          onPressed: () => _leave(widget.onSkip),
           child: Text('Salta il respiro', style: TextStyle(color: t.dim)),
         ),
         const SizedBox(height: 12),
