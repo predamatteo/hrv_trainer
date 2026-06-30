@@ -69,11 +69,15 @@ class LiveBpmRow extends StatelessWidget {
   }
 }
 
-/// Grafico HR live condiviso. Una linea (i battiti): la sua oscillazione È la
-/// visualizzazione del respiro (RSA). Se [pacer] è fornito (training a respiro
+/// Tachogramma live condiviso. Una linea: l'intervallo RR (ms, = 60000/bpm) nel
+/// tempo, la cui oscillazione È la visualizzazione del respiro (RSA). Usa la
+/// STESSA grandezza, orientazione e stile (linea spezzata, auto-zoom in ms) del
+/// tachogramma dello storico (`session_detail_screen.dart` `_TachogramCard`),
+/// così che il grafico live sia la versione "che cresce in tempo reale" di
+/// quello finale — niente più effetto capovolto fra le due viste (prima il live
+/// era in bpm, l'inverso dell'RR). Se [pacer] è fornito (training a respiro
 /// guidato) disegna anche la curva tratteggiata del respiro guida + una legenda
-/// compatta; se è null (misura spontanea) mostra solo l'HR. Stile assolutamente
-/// identico nei due casi così le due schermate combaciano.
+/// compatta; se è null (misura spontanea) mostra solo l'RR.
 class LiveHrChart extends StatelessWidget {
   final List<HrTracePoint> trace;
 
@@ -121,17 +125,32 @@ class LiveHrChart extends StatelessWidget {
 
   Widget _buildChart(ThemeData theme, ColorScheme scheme) {
     final start = startReference ?? trace.first.timestamp;
+    // Asse Y in RR (ms): RR = 60000/bpm. Stessa grandezza del tachogramma dello
+    // storico, così l'oscillazione punta nello stesso verso (in relax l'RR sale)
+    // e le due viste combaciano. I battiti con bpm non valido vengono saltati.
     final spots = [
       for (final p in trace)
-        FlSpot(
-          p.timestamp.difference(start).inMilliseconds / 1000.0,
-          p.bpm.toDouble(),
-        ),
+        if (p.bpm > 0)
+          FlSpot(
+            p.timestamp.difference(start).inMilliseconds / 1000.0,
+            60000.0 / p.bpm,
+          ),
     ];
-    final bpms = trace.map((p) => p.bpm).toList();
-    final dataMin = bpms.reduce((a, b) => a < b ? a : b);
-    final dataMax = bpms.reduce((a, b) => a > b ? a : b);
-    final pad = ((dataMax - dataMin) * 0.2).clamp(3, 10).toDouble();
+    // Difensivo: tutti i battiti scartati (bpm non validi) → placeholder.
+    if (spots.length < 2) {
+      return Center(
+        child: Text(
+          'In attesa del watch…',
+          style:
+              theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+        ),
+      );
+    }
+    final ys = spots.map((s) => s.y).toList();
+    final dataMin = ys.reduce((a, b) => a < b ? a : b);
+    final dataMax = ys.reduce((a, b) => a > b ? a : b);
+    // Padding identico al tachogramma dello storico (range in ms).
+    final pad = ((dataMax - dataMin) * 0.15).clamp(20, 100).toDouble();
     final yMin = (dataMin - pad).floorToDouble();
     final yMax = (dataMax + pad).ceilToDouble();
 
@@ -148,7 +167,8 @@ class LiveHrChart extends StatelessWidget {
     final p = pacer;
     if (p != null) {
       // Overlay respiro guida: campiona la curva del pacer e la mappa nel
-      // range Y così che HR e respiro siano visivamente confrontabili.
+      // range Y (in ms) così che RR e respiro siano visivamente confrontabili.
+      // Identico all'overlay del tachogramma storico.
       final yMid = (yMin + yMax) / 2;
       final halfRange = (yMax - yMin) * 0.4;
       final breathSpots = <FlSpot>[];
@@ -167,11 +187,12 @@ class LiveHrChart extends StatelessWidget {
         dashArray: const [4, 4],
       ));
     }
+    // Linea RR: spezzata (non curva) e sottile come nel tachogramma storico —
+    // ogni punto è un intervallo reale, niente smoothing che inventerebbe valori.
     lines.add(LineChartBarData(
       spots: spots,
-      isCurved: true,
-      curveSmoothness: 0.2,
-      barWidth: 2.2,
+      isCurved: false,
+      barWidth: 1.4,
       color: scheme.primary,
       dotData: const FlDotData(show: false),
     ));
@@ -201,7 +222,8 @@ class LiveHrChart extends StatelessWidget {
           leftTitles: AxisTitles(
             sideTitles: SideTitles(
               showTitles: true,
-              reservedSize: 30,
+              // 36 (non 30) per far stare i valori RR a 3-4 cifre (es. 1000 ms).
+              reservedSize: 36,
               interval: yInterval,
               getTitlesWidget: (v, _) => Padding(
                 padding: const EdgeInsets.only(right: 4),
@@ -241,7 +263,7 @@ class LiveHrChart extends StatelessWidget {
   }
 }
 
-/// Legenda compatta del chart con overlay: linea piena = HR, tratteggiata =
+/// Legenda compatta del chart con overlay: linea piena = RR, tratteggiata =
 /// respiro guida. Mostrata solo dal training.
 class _Legend extends StatelessWidget {
   final ColorScheme scheme;
@@ -254,7 +276,7 @@ class _Legend extends StatelessWidget {
       children: [
         Container(width: 10, height: 2.5, color: scheme.primary),
         const SizedBox(width: 4),
-        Text('HR live', style: textTheme.labelSmall),
+        Text('RR', style: textTheme.labelSmall),
         const SizedBox(width: 14),
         SizedBox(
           width: 14,

@@ -228,8 +228,8 @@ class _MorningCheckInScreenState extends ConsumerState<MorningCheckInScreen> {
                             ),
                             const SizedBox(height: 10),
                             Text(
-                              'La linea segue il cuore: sale quando inspiri, scende quando '
-                              'espiri (RSA). Respira come viene, non seguirla.',
+                              'La linea è l\'intervallo tra i battiti: sale quando espiri, '
+                              'scende quando inspiri (RSA). Respira come viene, non seguirla.',
                               textAlign: TextAlign.center,
                               style: text.bodySmall?.copyWith(color: t.faint, height: 1.35),
                             ),

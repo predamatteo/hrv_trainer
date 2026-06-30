@@ -543,7 +543,7 @@ class _RsaCard extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
-            'Frequenza cardiaca · onda RSA',
+            'Intervallo RR · onda RSA',
             style: Theme.of(context).textTheme.labelLarge?.copyWith(color: t.dim),
           ),
           const SizedBox(height: 8),
