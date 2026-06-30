@@ -180,9 +180,10 @@ class ReminderController extends StateNotifier<ReminderSettings> {
   Future<void> _reschedule() async {
     final service = ref.read(notificationServiceProvider);
 
-    // Niente da pianificare → azzera e basta.
+    // Niente da pianificare → azzera i soli promemoria generici (il promemoria
+    // del piano è gestito separatamente e non va toccato).
     if (!state.enabled || state.times.isEmpty) {
-      await service.cancelAll();
+      await service.cancelReminders();
       return;
     }
 
@@ -208,9 +209,10 @@ class ReminderController extends StateNotifier<ReminderSettings> {
     }
 
     // Modalità fissa: serie giornaliera ripetuta, robusta "per sempre" anche ad
-    // app mai aperta. Azzeriamo prima per evitare orfani quando un orario viene
-    // rimosso (l'id non riprogrammato resterebbe altrimenti schedulato).
-    await service.cancelAll();
+    // app mai aperta. Azzeriamo prima (solo i promemoria generici) per evitare
+    // orfani quando un orario viene rimosso (l'id non riprogrammato resterebbe
+    // altrimenti schedulato).
+    await service.cancelReminders();
     final times = state.times;
     for (var i = 0; i < times.length; i++) {
       await service.scheduleDailyReminder(

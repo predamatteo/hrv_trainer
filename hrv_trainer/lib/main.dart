@@ -11,6 +11,7 @@ import 'core/router/app_router.dart';
 import 'core/theme/app_theme.dart';
 import 'shared/connect_iq/hr_source_provider.dart';
 import 'shared/connect_iq/remote_session_persister.dart';
+import 'shared/notifications/plan_reminder.dart';
 import 'shared/notifications/reminder_settings.dart';
 import 'shared/profile/onboarding_provider.dart';
 import 'shared/usage/usage_metrics_provider.dart';
@@ -57,6 +58,10 @@ class _HrvTrainerAppState extends ConsumerState<HrvTrainerApp>
     // cambio di fuso orario o aggiornamento dell'app). Non-autoDispose →
     // resta vivo per tutta la durata dell'app.
     ref.read(reminderControllerProvider);
+    // Riallinea il promemoria del piano allo stato del piano attivo (durata
+    // della settimana corrente, o cancellazione se il piano è finito). Separato
+    // dai promemoria generici, non li tocca.
+    unawaited(ref.read(planReminderControllerProvider).reconcile());
     // Metriche d'uso locali (#13): registra l'apertura (solo on-device).
     unawaited(ref.read(usageMetricsProvider.notifier).recordOpen());
   }
@@ -92,6 +97,9 @@ class _HrvTrainerAppState extends ConsumerState<HrvTrainerApp>
       // oggi quando l'utente torna in app (es. dopo una sessione completata).
       // No-op se la modalità skip è off.
       unawaited(ref.read(reminderControllerProvider.notifier).refresh());
+      // Riallinea il promemoria del piano al rientro (durata della settimana
+      // corrente, skip se il piano si è completato nel frattempo).
+      unawaited(ref.read(planReminderControllerProvider).reconcile());
       // Registra anche il rientro come apertura del giorno (dedup interno).
       unawaited(ref.read(usageMetricsProvider.notifier).recordOpen());
     }

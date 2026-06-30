@@ -63,6 +63,18 @@ class NotificationService {
   /// Base degli id notifica per lo scheduling bufferato (modalità skip).
   static const int _reminderIdBase = 1000;
 
+  /// Id del promemoria del PIANO di allenamento. Spazio separato (2000+) da
+  /// quello dei promemoria generici (1000+) così i due sistemi non si
+  /// sovrascrivono mai. È un singolo id ripetuto: zonedSchedule con lo stesso
+  /// id ne aggiorna l'orario/testo.
+  static const int _planReminderId = 2000;
+
+  /// Payload con cui taggare le due famiglie di notifiche. La cancellazione è
+  /// filtrata per payload (non `cancelAll`), così il promemoria del piano
+  /// sopravvive ai reschedule dei promemoria generici e viceversa.
+  static const String _reminderPayload = 'training_reminder';
+  static const String _planReminderPayload = 'plan_reminder';
+
   /// Inizializza plugin, database timezone e canale. Idempotente: chiamabile
   /// a ogni avvio senza effetti collaterali.
   Future<void> init() async {
@@ -146,7 +158,34 @@ class NotificationService {
       notificationDetails: _details,
       androidScheduleMode: mode,
       matchDateTimeComponents: DateTimeComponents.time,
-      payload: 'training_reminder',
+      payload: _reminderPayload,
+    );
+  }
+
+  /// Schedula (o aggiorna) il promemoria GIORNALIERO del piano di allenamento a
+  /// [hour]:[minute], su un id/payload dedicati così da non interferire con i
+  /// promemoria generici. Sostituisce automaticamente l'eventuale promemoria del
+  /// piano precedente (stesso id).
+  Future<void> schedulePlanReminder({
+    required int hour,
+    required int minute,
+    required String title,
+    required String body,
+  }) async {
+    await init();
+    final canExact = await _android?.canScheduleExactNotifications() ?? false;
+    final mode = canExact
+        ? AndroidScheduleMode.exactAllowWhileIdle
+        : AndroidScheduleMode.inexactAllowWhileIdle;
+    await _plugin.zonedSchedule(
+      id: _planReminderId,
+      title: title,
+      body: body,
+      scheduledDate: _nextInstanceOf(hour, minute),
+      notificationDetails: _details,
+      androidScheduleMode: mode,
+      matchDateTimeComponents: DateTimeComponents.time,
+      payload: _planReminderPayload,
     );
   }
 
@@ -162,7 +201,9 @@ class NotificationService {
     int bufferDays = 14,
   }) async {
     await init();
-    await _plugin.cancelAll();
+    // Cancella solo i promemoria generici (per payload), NON quello del piano:
+    // i due sistemi convivono senza clobbersi.
+    await _cancelByPayload(_reminderPayload);
     if (slots.isEmpty) return;
 
     final canExact = await _android?.canScheduleExactNotifications() ?? false;
@@ -189,7 +230,7 @@ class NotificationService {
           scheduledDate: fire,
           notificationDetails: _details,
           androidScheduleMode: mode,
-          payload: 'training_reminder',
+          payload: _reminderPayload,
         );
       }
     }
@@ -198,6 +239,31 @@ class NotificationService {
   Future<void> cancelAll() async {
     await init();
     await _plugin.cancelAll();
+  }
+
+  /// Cancella i soli promemoria generici (per payload), lasciando intatto quello
+  /// del piano. Da usare nel flusso dei promemoria al posto di cancelAll.
+  Future<void> cancelReminders() async {
+    await init();
+    await _cancelByPayload(_reminderPayload);
+  }
+
+  /// Cancella il promemoria del piano (es. piano abbandonato/completato).
+  Future<void> cancelPlanReminders() async {
+    await init();
+    await _cancelByPayload(_planReminderPayload);
+  }
+
+  /// Cancella tutte le notifiche schedulate con un dato [payload]. Sfrutta
+  /// `pendingNotificationRequests()` (il payload è persistito dal plugin), così
+  /// la cancellazione è esatta senza dover conoscere gli id.
+  Future<void> _cancelByPayload(String payload) async {
+    final pending = await _plugin.pendingNotificationRequests();
+    for (final p in pending) {
+      if (p.payload == payload) {
+        await _plugin.cancel(id: p.id);
+      }
+    }
   }
 
   /// Prossima occorrenza di [hour]:[minute] nel fuso locale. Se l'orario di
