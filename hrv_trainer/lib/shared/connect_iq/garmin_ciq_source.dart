@@ -64,6 +64,19 @@ class GarminCiqSource implements HeartRateSource {
   StreamSubscription? _eventSub;
   HrSourceState _state = HrSourceState.disconnected;
 
+  // Watchdog anti-blocco su 'connecting'. start()/reconnect() impostano
+  // 'connecting'; se nessun evento risolutivo arriva (es. lo status device
+  // resta UNKNOWN dopo un blip BT e il bridge nativo per scelta non emette
+  // nulla per non "flappare") senza questo timer lo stato resterebbe
+  // 'connecting' per sempre e il gate di prontezza (canStart==ready) terrebbe
+  // l'utente bloccato su "Connessione…" fino al kill dell'app. Al timeout
+  // retrocediamo a 'disconnected', che riabilita l'azione "Riconnetti".
+  Timer? _connectingWatchdog;
+  // 40s > kWatchFirstSampleTimeout(35s): una start()/prep sana (openApplication
+  // ~17s + warm-up sensore + primo sample) non viene mai retrocessa; nel caso
+  // sano il primo battito promuove comunque a 'connected' azzerando il timer.
+  static const _kConnectingTimeout = Duration(seconds: 40);
+
   GarminCiqSource() {
     _eventSub = _events.receiveBroadcastStream().listen(_onEvent,
         onError: (Object e) => _setState(HrSourceState.error));
@@ -88,6 +101,21 @@ class GarminCiqSource implements HeartRateSource {
   void _setState(HrSourceState s) {
     _state = s;
     _stateController.add(s);
+    // (Ri)arma il watchdog anti-blocco: 'connecting' non deve mai essere uno
+    // stato assorbente. Ogni transizione lo cancella; solo l'ingresso in
+    // 'connecting' lo riarma. Un evento risolutivo (uno STATE riconosciuto, la
+    // promozione su HR_SAMPLE, o la coda di stop()) lo spegne prima del timeout.
+    _connectingWatchdog?.cancel();
+    _connectingWatchdog = null;
+    if (s == HrSourceState.connecting) {
+      _connectingWatchdog = Timer(_kConnectingTimeout, () {
+        // Rileggi _state al fire (non una copia catturata): se nel frattempo si
+        // è risolto, non retrocedere.
+        if (_state == HrSourceState.connecting) {
+          _setState(HrSourceState.disconnected);
+        }
+      });
+    }
   }
 
   void _onEvent(dynamic raw) {
@@ -151,6 +179,16 @@ class GarminCiqSource implements HeartRateSource {
           watchElapsedMs: watchElapsedMs,
           watchPacerMs: watchPacerMs,
         ));
+        // Un battito è la prova più forte che il link col watch è vivo:
+        // promuovi lo stato a 'connected' anche se lo STATE:ACTIVE una-tantum
+        // del watch (o il DEVICE_CONNECTED nativo) è andato perso. Guardia
+        // on-change: niente evento sullo stateStream ad ogni battito (evita che
+        // watchReadinessProvider si ricostruisca ~1 volta/s). SOLO su HR_SAMPLE
+        // (flusso live reale): HRV_RESULT/SESSION_SUMMARY possono arrivare dal
+        // drain del PendingStore a link NON vivo e fabbricherebbero prontezza.
+        if (_state != HrSourceState.connected) {
+          _setState(HrSourceState.connected);
+        }
       case 'HRV_RESULT':
         final reqId = raw['reqId'] as int?;
         final result = HrvOnDemandResult.fromJson(
@@ -354,6 +392,7 @@ class GarminCiqSource implements HeartRateSource {
 
   @override
   void dispose() {
+    _connectingWatchdog?.cancel();
     _eventSub?.cancel();
     _hrController.close();
     _stateController.close();

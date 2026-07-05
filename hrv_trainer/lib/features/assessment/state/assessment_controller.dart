@@ -90,6 +90,9 @@ class AssessmentController extends StateNotifier<AssessmentState> {
   // Watchdog del flusso battiti durante la scansione: alza connectionLost se i
   // battiti si interrompono. Resettato ad ogni battito.
   Timer? _staleDataTimer;
+  // Un solo tentativo di auto-recupero (reconnect) per stallo del flusso;
+  // riabilitato quando i battiti riprendono.
+  bool _healingRequested = false;
   DateTime? _stepStartedAt;
 
   AssessmentController(this.ref)
@@ -155,6 +158,13 @@ class AssessmentController extends StateNotifier<AssessmentState> {
     _staleDataTimer = Timer(kWatchStaleDataTimeout, () {
       if (state.phase == AssessmentPhase.scanning && !state.connectionLost) {
         state = state.copyWith(connectionLost: true);
+        // Auto-recupero: ri-scansiona il device e ri-registra il listener
+        // app-event nativo (spesso caduto durante una rinegoziazione BT), così
+        // i battiti riprendono senza killare l'app. Un solo tentativo per stallo.
+        if (!_healingRequested) {
+          _healingRequested = true;
+          unawaited(ref.read(heartRateSourceProvider).reconnect());
+        }
       }
     });
   }
@@ -254,6 +264,8 @@ class AssessmentController extends StateNotifier<AssessmentState> {
     }
     // Flusso vivo: rilancia il watchdog e azzera "connessione persa".
     _armStaleDataWatchdog();
+    // Battiti in arrivo → riabilita l'auto-recupero per un eventuale stallo futuro.
+    _healingRequested = false;
     if (state.connectionLost) {
       state = state.copyWith(connectionLost: false);
     }

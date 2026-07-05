@@ -125,6 +125,10 @@ class MorningCheckInController extends StateNotifier<MorningCheckInState> {
   // Watchdog del flusso battiti durante la cattura: alza connectionLost se i
   // battiti si interrompono. Resettato ad ogni battito.
   Timer? _staleDataTimer;
+  // Un solo tentativo di auto-recupero (reconnect) per stallo del flusso;
+  // riabilitato quando i battiti riprendono. Evita un reconnect storm su un
+  // link che resta muto.
+  bool _healingRequested = false;
   DateTime? _phaseStart;
   final List<RrInterval> _window = [];
 
@@ -233,6 +237,14 @@ class MorningCheckInController extends StateNotifier<MorningCheckInState> {
           _phaseStart != null &&
           !state.connectionLost) {
         state = state.copyWith(connectionLost: true);
+        // Auto-recupero: uno stallo del flusso è spesso il listener app-event
+        // nativo caduto durante una rinegoziazione BT. reconnect() ri-scansiona
+        // il device e ri-registra il listener, così i battiti riprendono senza
+        // killare l'app. Un solo tentativo per stallo (riarmato in _onBeat).
+        if (!_healingRequested) {
+          _healingRequested = true;
+          unawaited(ref.read(heartRateSourceProvider).reconnect());
+        }
       }
     });
   }
@@ -294,6 +306,9 @@ class MorningCheckInController extends StateNotifier<MorningCheckInState> {
         state = state.copyWith(connectionLost: false);
       }
     }
+    // Battiti in arrivo: il flusso è vivo → riabilita l'auto-recupero per un
+    // eventuale stallo futuro.
+    _healingRequested = false;
     final startedAt = _phaseStart!;
     final elapsed = DateTime.now().difference(startedAt).inSeconds;
     final bpm = e.bpm;
