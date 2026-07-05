@@ -476,9 +476,18 @@ internal class RealCiqBackend(
     }
 
     private fun registerAppEvents(dev: IQDevice) {
-        // Idempotente: unregister prima di register così chiamarla di nuovo su
-        // un reconnect non duplica le callback.
-        try { connectIq.unregisterForApplicationEvents(dev, iqApp) } catch (_: Throwable) {}
+        // NON smontare prima di registrare. Su questo SDK Connect IQ
+        // registerForAppEvents è keyed per (device, app): se il receiver esiste
+        // già fa solo un setAppListener(...) e ritorna (nessuna callback
+        // duplicata, nessun BroadcastReceiver in più). L'unregister preventivo
+        // invece azzerava l'appListener PRIMA del register; se quest'ultimo
+        // lanciava InvalidStateException (tipico proprio all'istante di un
+        // deviceEvent CONNECTED, con l'SDK in transizione BT) il listener
+        // restava NULL su un receiver ancora vivo → telefono sordo, stallo dei
+        // battiti a orologio acceso (Sintomo "grafico bloccato + Connessione
+        // persa"). Registrando senza smontare, un register fallito lascia
+        // intatto il listener funzionante. La pulizia cross-device è già gestita
+        // da refreshKnownDevices (unregisterForApplicationEvents sul device vecchio).
         try {
             connectIq.registerForAppEvents(dev, iqApp) { _, _, message, status ->
                 Log.i(GarminCiqBridge.TAG,

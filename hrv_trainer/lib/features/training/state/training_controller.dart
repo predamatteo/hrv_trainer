@@ -132,6 +132,9 @@ class TrainingController extends StateNotifier<TrainingState> {
   // oltre [kWatchStaleDataTimeout] alza il flag connectionLost (banner), senza
   // annullare la misura. Resettato ad ogni battito.
   Timer? _staleDataTimer;
+  // Un solo tentativo di auto-recupero (reconnect) per stallo del flusso;
+  // riabilitato quando i battiti riprendono. Evita un reconnect storm.
+  bool _healingRequested = false;
   // Timer di fine PREPARAZIONE: scatta quando l'istante di inizio pacing è
   // raggiunto, abbassando `preparing` così UI e orb passano a regime allineati
   // al watch (che parte a ritmo nello stesso istante).
@@ -260,6 +263,14 @@ class TrainingController extends StateNotifier<TrainingState> {
     _staleDataTimer = Timer(kWatchStaleDataTimeout, () {
       if (state.running && state.startedAt != null && !state.connectionLost) {
         state = state.copyWith(connectionLost: true);
+        // Auto-recupero: uno stallo del flusso è spesso il listener app-event
+        // nativo caduto durante una rinegoziazione BT. reconnect() ri-scansiona
+        // il device e ri-registra il listener, così i battiti riprendono senza
+        // killare l'app. Un solo tentativo per stallo (riarmato in _onBeat).
+        if (!_healingRequested) {
+          _healingRequested = true;
+          unawaited(ref.read(heartRateSourceProvider).reconnect());
+        }
       }
     });
   }
@@ -366,6 +377,8 @@ class TrainingController extends StateNotifier<TrainingState> {
     }
     // Battito ricevuto: il flusso è vivo. Rilancia il watchdog.
     _armStaleDataWatchdog();
+    // Battiti in arrivo → riabilita l'auto-recupero per un eventuale stallo futuro.
+    _healingRequested = false;
     // Raccogli RR/HR SOLO a regime: i battiti durante la prep sono warm-up a
     // respiro NON guidato (orologio silenzioso) e contaminerebbero
     // metriche/grafico. Mantieni TUTTI i campioni della sessione (la finestra
