@@ -101,6 +101,7 @@ class GarminCiqSource implements HeartRateSource {
   void _setState(HrSourceState s) {
     _state = s;
     _stateController.add(s);
+    _diag('state -> ${s.name}');
     // (Ri)arma il watchdog anti-blocco: 'connecting' non deve mai essere uno
     // stato assorbente. Ogni transizione lo cancella; solo l'ingresso in
     // 'connecting' lo riarma. Un evento risolutivo (uno STATE riconosciuto, la
@@ -116,6 +117,14 @@ class GarminCiqSource implements HeartRateSource {
         }
       });
     }
+  }
+
+  /// Riga di diagnostica verso il log persistente nativo (CiqDiag lato Kotlin),
+  /// pullabile via adb. Best-effort: non deve mai rompere il flusso.
+  void _diag(String msg) {
+    unawaited(
+      _channel.invokeMethod<void>('logDiag', {'m': msg}).catchError((_) {}),
+    );
   }
 
   void _onEvent(dynamic raw) {
@@ -248,6 +257,7 @@ class GarminCiqSource implements HeartRateSource {
     // Ricomincia la stima del baseline d_down per la sessione.
     _minGapMs = null;
     _baselineBeats = 0;
+    _diag('start(dur=${targetDurationSec ?? "-"}s)');
     _setState(HrSourceState.connecting);
     final args = <String, Object?>{'hz': 4};
     if (pattern != null) {
@@ -276,6 +286,7 @@ class GarminCiqSource implements HeartRateSource {
 
   @override
   Future<void> stop() async {
+    _diag('stop()');
     // Generazione di questa operazione di stop: se viene superata (nuovo
     // start()/stop()) PRIMA del fallback, lo salteremo per non interferire con
     // la sessione successiva.
@@ -332,6 +343,7 @@ class GarminCiqSource implements HeartRateSource {
 
   @override
   Future<void> reconnect() async {
+    _diag('reconnect() (state=${_state.name})');
     // Non sbiancare lo stato se siamo già connessi: il refresh ri-emetterà
     // comunque lo STATE reale del device. Mostriamo "connecting" solo se
     // eravamo giù, così "Connetti"/"Riconnetti" dà feedback immediato.
