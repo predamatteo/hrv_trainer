@@ -69,15 +69,18 @@ class LiveBpmRow extends StatelessWidget {
   }
 }
 
-/// Tachogramma live condiviso. Una linea: l'intervallo RR (ms, = 60000/bpm) nel
-/// tempo, la cui oscillazione È la visualizzazione del respiro (RSA). Usa la
-/// STESSA grandezza, orientazione e stile (linea spezzata, auto-zoom in ms) del
-/// tachogramma dello storico (`session_detail_screen.dart` `_TachogramCard`),
-/// così che il grafico live sia la versione "che cresce in tempo reale" di
-/// quello finale — niente più effetto capovolto fra le due viste (prima il live
-/// era in bpm, l'inverso dell'RR). Se [pacer] è fornito (training a respiro
-/// guidato) disegna anche la curva tratteggiata del respiro guida + una legenda
-/// compatta; se è null (misura spontanea) mostra solo l'RR.
+/// Grafico del battito live condiviso. Una linea: la frequenza cardiaca (bpm)
+/// nel tempo, la cui oscillazione È la visualizzazione del respiro (RSA: in
+/// inspirazione il cuore accelera, in espirazione rallenta). Mostriamo il bpm e
+/// non l'intervallo RR (= 60000/bpm) perché su questo hardware sono la stessa
+/// informazione, ma il battito è più leggibile e va nello STESSO verso del
+/// respiro (inspiro → sale), evitando l'effetto capovolto dell'RR. Usa la stessa
+/// grandezza, orientazione e stile (linea spezzata, auto-zoom) del grafico dello
+/// storico (`session_detail_screen.dart` `_TachogramCard`), così che il live sia
+/// la versione "che cresce in tempo reale" di quello finale. Se [pacer] è
+/// fornito (training a respiro guidato) disegna anche la curva tratteggiata del
+/// respiro guida + una legenda compatta; se è null (misura spontanea) mostra
+/// solo il battito.
 class LiveHrChart extends StatelessWidget {
   final List<HrTracePoint> trace;
 
@@ -125,15 +128,15 @@ class LiveHrChart extends StatelessWidget {
 
   Widget _buildChart(ThemeData theme, ColorScheme scheme) {
     final start = startReference ?? trace.first.timestamp;
-    // Asse Y in RR (ms): RR = 60000/bpm. Stessa grandezza del tachogramma dello
-    // storico, così l'oscillazione punta nello stesso verso (in relax l'RR sale)
-    // e le due viste combaciano. I battiti con bpm non valido vengono saltati.
+    // Asse Y in bpm (frequenza cardiaca). Stessa grandezza del grafico dello
+    // storico, così l'oscillazione punta nello stesso verso (inspiro → sale) e
+    // le due viste combaciano. I battiti con bpm non valido vengono saltati.
     final spots = [
       for (final p in trace)
         if (p.bpm > 0)
           FlSpot(
             p.timestamp.difference(start).inMilliseconds / 1000.0,
-            60000.0 / p.bpm,
+            p.bpm.toDouble(),
           ),
     ];
     // Difensivo: tutti i battiti scartati (bpm non validi) → placeholder.
@@ -149,8 +152,8 @@ class LiveHrChart extends StatelessWidget {
     final ys = spots.map((s) => s.y).toList();
     final dataMin = ys.reduce((a, b) => a < b ? a : b);
     final dataMax = ys.reduce((a, b) => a > b ? a : b);
-    // Padding identico al tachogramma dello storico (range in ms).
-    final pad = ((dataMax - dataMin) * 0.15).clamp(20, 100).toDouble();
+    // Padding identico al grafico dello storico (range in bpm).
+    final pad = ((dataMax - dataMin) * 0.15).clamp(2, 10).toDouble();
     final yMin = (dataMin - pad).floorToDouble();
     final yMax = (dataMax + pad).ceilToDouble();
 
@@ -167,8 +170,9 @@ class LiveHrChart extends StatelessWidget {
     final p = pacer;
     if (p != null) {
       // Overlay respiro guida: campiona la curva del pacer e la mappa nel
-      // range Y (in ms) così che RR e respiro siano visivamente confrontabili.
-      // Identico all'overlay del tachogramma storico.
+      // range Y (in bpm) così che battito e respiro siano confrontabili. Con
+      // l'asse in bpm la guida è in fase col segnale (amp=1 al picco inspiratorio
+      // ⇒ in alto, dove sale anche il battito). Identico allo storico.
       final yMid = (yMin + yMax) / 2;
       final halfRange = (yMax - yMin) * 0.4;
       final breathSpots = <FlSpot>[];
@@ -187,8 +191,8 @@ class LiveHrChart extends StatelessWidget {
         dashArray: const [4, 4],
       ));
     }
-    // Linea RR: spezzata (non curva) e sottile come nel tachogramma storico —
-    // ogni punto è un intervallo reale, niente smoothing che inventerebbe valori.
+    // Linea del battito: spezzata (non curva) e sottile come nello storico —
+    // ogni punto è un valore reale, niente smoothing che inventerebbe dati.
     lines.add(LineChartBarData(
       spots: spots,
       isCurved: false,
@@ -222,8 +226,8 @@ class LiveHrChart extends StatelessWidget {
           leftTitles: AxisTitles(
             sideTitles: SideTitles(
               showTitles: true,
-              // 36 (non 30) per far stare i valori RR a 3-4 cifre (es. 1000 ms).
-              reservedSize: 36,
+              // 30 basta per i valori bpm a 2-3 cifre (es. 60, 120).
+              reservedSize: 30,
               interval: yInterval,
               getTitlesWidget: (v, _) => Padding(
                 padding: const EdgeInsets.only(right: 4),
@@ -263,8 +267,8 @@ class LiveHrChart extends StatelessWidget {
   }
 }
 
-/// Legenda compatta del chart con overlay: linea piena = RR, tratteggiata =
-/// respiro guida. Mostrata solo dal training.
+/// Legenda compatta del chart con overlay: linea piena = battito, tratteggiata
+/// = respiro guida. Mostrata solo dal training.
 class _Legend extends StatelessWidget {
   final ColorScheme scheme;
   final TextTheme textTheme;
@@ -276,7 +280,7 @@ class _Legend extends StatelessWidget {
       children: [
         Container(width: 10, height: 2.5, color: scheme.primary),
         const SizedBox(width: 4),
-        Text('RR', style: textTheme.labelSmall),
+        Text('battito', style: textTheme.labelSmall),
         const SizedBox(width: 14),
         SizedBox(
           width: 14,

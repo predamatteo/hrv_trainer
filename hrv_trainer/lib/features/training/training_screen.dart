@@ -583,7 +583,7 @@ class _RunningCountdownState extends ConsumerState<_RunningCountdown> {
   }
 }
 
-/// Card dell'onda RSA: tachogramma RR live + respiro guida.
+/// Card dell'onda RSA: battito live (bpm) + respiro guida.
 class _RsaCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -595,7 +595,7 @@ class _RsaCard extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
-            'Intervallo RR · onda RSA',
+            'Battito · onda RSA',
             style: Theme.of(context).textTheme.labelLarge?.copyWith(color: t.dim),
           ),
           const SizedBox(height: 8),
