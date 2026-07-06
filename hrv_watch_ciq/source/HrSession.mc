@@ -152,9 +152,16 @@ class HrSession {
     // locale (mIsLocal=true), altrimenti null.
     function stopIfActive() {
         if (!mActive) { return null; }
-        Sensor.enableSensorEvents(null);
-        Sensor.setEnabledSensors([]);
+        // Disattiva il sensore in modo DIFENSIVO. Se una di queste chiamate
+        // lancia (osservato su alcuni firmware Instinct) NON deve lasciare la
+        // sessione bloccata 'attiva': altrimenti lo START_SESSION successivo
+        // early-returna (mActive ancora true) e il check-in non riparte finché
+        // l'utente non riavvia l'orologio. mActive=false PRIMA di tutto, come
+        // già fa discardIfActive() — così un guasto qui resta recuperabile lato
+        // telefono invece di incastrare l'orologio.
         mActive = false;
+        try { Sensor.enableSensorEvents(null); } catch (ex) {}
+        try { Sensor.setEnabledSensors([]); } catch (ex) {}
 
         var durationMs = Sys.getTimer() - mStartMs;
 
@@ -295,7 +302,12 @@ class HrSession {
         } catch (ex) {
             // BT giù / phone non connesso: continuiamo comunque a campionare.
         }
-        if (mView != null) { mView.setBpm(bpm); }
+        // setBpm → Ui.requestUpdate: incapsulato così un errore di rendering
+        // non fa crashare il callback del sensore (che ucciderebbe la sessione
+        // e richiederebbe un riavvio dell'orologio).
+        if (mView != null) {
+            try { mView.setBpm(bpm); } catch (ex) {}
+        }
     }
 
     function isActive() { return mActive; }

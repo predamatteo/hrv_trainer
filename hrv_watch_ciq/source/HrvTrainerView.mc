@@ -201,6 +201,10 @@ class HrvTrainerView extends Ui.View {
 
     function onTick() as Void {
         if (!mActive) { return; }
+        // Un'eccezione nel tick del timer 5 Hz crasherebbe l'app (= l'utente
+        // deve riavviare l'orologio). La incapsuliamo: meglio saltare un frame
+        // che perdere la sessione. Il corpo resta invariato dentro il try.
+        try {
 
         var elapsedMs = Sys.getTimer() - mStartMs;
         // Tempo di SESSIONE (esclusa la prep): negativo durante la prep.
@@ -247,6 +251,10 @@ class HrvTrainerView extends Ui.View {
             }
         }
         Ui.requestUpdate();
+
+        } catch (ex) {
+            Sys.println("onTick FAIL " + ex.getErrorMessage());
+        }
     }
 
     // Ritorna true quando la sessione va abortita per telefono perso. Conta
