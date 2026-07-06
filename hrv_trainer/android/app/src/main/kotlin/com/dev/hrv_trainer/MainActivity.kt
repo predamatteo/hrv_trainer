@@ -48,6 +48,7 @@ class MainActivity : FlutterActivity() {
                         b.requestSync(force, result)
                     }
                     "listDevices" -> b.listDevices(result)
+                    "logDiag" -> b.logDiag(call.argument<String>("m") ?: "", result)
                     else -> result.notImplemented()
                 }
             }

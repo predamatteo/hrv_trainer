@@ -65,6 +65,7 @@ class GarminCiqBridge(private val context: Context) {
             Log.w(TAG, "Init reale fallita (${t.javaClass.simpleName}: ${t.message}), uso mock", t)
         }
         mockBackend.onEvent = { payload -> postEvent(payload) }
+        CiqDiag.append(context, "bridge init: backend=${if (realBackend != null) "real" else "mock"}")
     }
 
     val eventStreamHandler: EventChannel.StreamHandler =
@@ -154,6 +155,12 @@ class GarminCiqBridge(private val context: Context) {
         } catch (t: Throwable) {
             result.error("LIST_FAILED", t.message, null)
         }
+    }
+
+    /** Append di una riga di diagnostica dal lato Dart (phone) al log persistente. */
+    fun logDiag(msg: String, result: MethodChannel.Result) {
+        CiqDiag.append(context, "phone   $msg")
+        result.success(null)
     }
 
     private fun postEvent(payload: Map<String, Any?>) {
@@ -344,6 +351,14 @@ internal class RealCiqBackend(
     @Volatile
     private var lastWatchActivityMs: Long = 0L
 
+    // Loggato una volta per sessione: "il primo HR_SAMPLE è arrivato" = il link
+    // watch→phone è davvero vivo. Reset ad ogni start(). Diagnostica.
+    @Volatile
+    private var sawFirstSample = false
+
+    /** Riga di diagnostica lato nativo verso il log persistente (best-effort). */
+    private fun diag(line: String) = CiqDiag.append(context, "native  $line")
+
     override var onEvent: (Map<String, Any?>) -> Unit = {}
 
     private val sdkListener = object : ConnectIQ.ConnectIQListener {
@@ -355,6 +370,7 @@ internal class RealCiqBackend(
 
         override fun onInitializeError(errStatus: ConnectIQ.IQSdkErrorStatus) {
             Log.e(GarminCiqBridge.TAG, "CIQ init error: $errStatus")
+            diag("SDK init ERROR: ${errStatus.name}")
             onEvent(mapOf("type" to "STATE", "v" to "ERROR", "msg" to errStatus.name))
         }
 
@@ -362,6 +378,7 @@ internal class RealCiqBackend(
             sdkReady = false
             // SDK spento: non possiamo più assumere che l'app sul watch giri.
             lastWatchActivityMs = 0L
+            diag("SDK shutdown -> DISCONNECTED")
             onEvent(mapOf("type" to "STATE", "v" to "DISCONNECTED"))
         }
     }
@@ -392,6 +409,7 @@ internal class RealCiqBackend(
             devices.joinToString { "${it.friendlyName}(${it.deviceIdentifier},${it.status?.name})" })
         val first = devices.firstOrNull()
         device = first
+        diag("refresh: knownDevices=${devices.size} first=${first?.friendlyName}(${first?.status?.name})")
         if (first != null) {
             registerDeviceEvents(first)
             registerAppEvents(first)
@@ -407,6 +425,7 @@ internal class RealCiqBackend(
             emitDeviceState(first.status, describeDevice(first))
         } else {
             lastWatchActivityMs = 0L
+            diag("refresh: NO_DEVICE (nessun orologio noto)")
             onEvent(mapOf("type" to "STATE", "v" to "NO_DEVICE", "backend" to "real"))
         }
     }
@@ -451,6 +470,7 @@ internal class RealCiqBackend(
         try {
             connectIq.registerForDeviceEvents(dev) { d, status ->
                 Log.i(GarminCiqBridge.TAG, "deviceEvent ${d?.friendlyName} status=${status?.name}")
+                diag("deviceEvent ${d?.friendlyName} status=${status?.name}")
                 when (status) {
                     IQDevice.IQDeviceStatus.CONNECTED -> {
                         // Watch tornato raggiungibile dopo un drop BT: riaggancia
@@ -500,6 +520,13 @@ internal class RealCiqBackend(
                     lastWatchActivityMs = System.currentTimeMillis()
                     Log.i(GarminCiqBridge.TAG,
                         "appEvent payload type=${payload["type"]}")
+                    val ptype = payload["type"] as? String
+                    if (ptype != "HR_SAMPLE") {
+                        diag("watch -> $ptype")
+                    } else if (!sawFirstSample) {
+                        sawFirstSample = true
+                        diag("watch -> primo HR_SAMPLE ricevuto (link vivo)")
+                    }
                     onEvent(payload)
                 } else {
                     Log.w(GarminCiqBridge.TAG,
@@ -509,11 +536,13 @@ internal class RealCiqBackend(
             Log.i(GarminCiqBridge.TAG, "registerForAppEvents OK for ${dev.friendlyName}")
         } catch (e: InvalidStateException) {
             Log.e(GarminCiqBridge.TAG, "registerForAppEvents InvalidStateException", e)
+            diag("registerForAppEvents FALLITO (InvalidStateException) — il listener precedente resta attivo")
         }
     }
 
     override fun reconnect() {
         Log.i(GarminCiqBridge.TAG, "reconnect requested (sdkReady=$sdkReady)")
+        diag("reconnect requested (sdkReady=$sdkReady)")
         if (!sdkReady) {
             // SDK non ancora pronto: ritenta l'init. Se Garmin Connect Mobile
             // manca, initialize rilancia e onInitializeError informa la UI.
@@ -530,12 +559,15 @@ internal class RealCiqBackend(
 
     override fun start(hz: Int, pacer: Map<String, Any?>) {
         Log.i(GarminCiqBridge.TAG, "RealBackend.start hz=$hz pacer=$pacer device=${device?.friendlyName} status=${device?.status}")
+        sawFirstSample = false
+        diag("start richiesto (device=${device?.friendlyName} status=${device?.status})")
         val payload = mutableMapOf<String, Any?>("type" to "START_SESSION", "hz" to hz)
         payload.putAll(pacer)
 
         val dev = device
         if (dev == null) {
             Log.w(GarminCiqBridge.TAG, "start senza device disponibile")
+            diag("start: NO_DEVICE (nessun device agganciato)")
             onEvent(mapOf("type" to "STATE", "v" to "NO_DEVICE"))
             return
         }
@@ -559,6 +591,7 @@ internal class RealCiqBackend(
             // non è persistente — vedi commento ASSUME_RUNNING_WINDOW_MS).
             Log.i(GarminCiqBridge.TAG,
                 "start: skip openApplication (watch attivo da ${sinceLastSignal} ms)")
+            diag("start: SALTO openApplication (watch attivo da ${sinceLastSignal}ms) — se l'app watch e' morta lo START va nel vuoto")
             val withTxMs = payload.toMutableMap().apply {
                 put("phoneTxMs", System.currentTimeMillis())
             }
@@ -569,6 +602,7 @@ internal class RealCiqBackend(
         Log.i(GarminCiqBridge.TAG,
             "start: calling openApplication on ${dev.friendlyName} " +
             "(lastWatchActivity ${if (lastWatchActivityMs == 0L) "mai" else "${sinceLastSignal} ms fa"})")
+        diag("start: openApplication su ${dev.friendlyName} (lastActivity=${if (lastWatchActivityMs == 0L) "mai" else "${sinceLastSignal}ms fa"})")
 
         // Sveglia l'app CIQ sul watch se non è già running, poi invia il
         // messaggio. Senza openApplication, sendMessage cade nel vuoto se
@@ -576,6 +610,7 @@ internal class RealCiqBackend(
         try {
             connectIq.openApplication(dev, iqApp) { _, _, status ->
                 Log.i(GarminCiqBridge.TAG, "openApplication status=${status.name}")
+                diag("openApplication status=${status.name}")
                 // Se l'app risulta già running (status APP_IS_ALREADY_RUNNING)
                 // possiamo aggiornare la finestra anche se non abbiamo ancora
                 // ricevuto un payload questo ciclo: la prossima start() entro
@@ -721,5 +756,37 @@ internal class RealCiqBackend(
         }
         try { connectIq.shutdown(context) } catch (_: Throwable) {}
         sdkReady = false
+    }
+}
+
+/**
+ * Log di diagnostica persistente su file, pullabile via adb anche giorni dopo
+ * (a differenza di logcat, che ha un ring buffer corto e ruota in poche ore).
+ * Path: /sdcard/Android/data/com.dev.hrv_trainer/files/ciq_diag.log (+ .1 di
+ * rotazione). Solo eventi a bassa frequenza (connessione/handshake), niente
+ * HR_SAMPLE per-battito. Non deve MAI lanciare: la diagnostica non rompe l'app.
+ */
+internal object CiqDiag {
+    private val lock = Any()
+    private val fmt = java.text.SimpleDateFormat("MM-dd HH:mm:ss.SSS", java.util.Locale.US)
+    private const val MAX_BYTES = 128 * 1024L
+
+    fun append(context: Context, line: String) {
+        synchronized(lock) {
+            try {
+                val dir = context.getExternalFilesDir(null) ?: return
+                val f = java.io.File(dir, "ciq_diag.log")
+                if (f.length() > MAX_BYTES) {
+                    val bak = java.io.File(dir, "ciq_diag.log.1")
+                    if (bak.exists()) bak.delete()
+                    f.renameTo(bak)
+                }
+                java.io.FileWriter(f, true).use {
+                    it.append(fmt.format(java.util.Date())).append("  ").append(line).append('\n')
+                }
+            } catch (_: Throwable) {
+                // best-effort: la diagnostica non deve mai rompere l'app.
+            }
+        }
     }
 }
