@@ -483,10 +483,10 @@ class _TachogramCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Text('Tachogram',
+                Text('Battito',
                     style: theme.textTheme.titleMedium),
                 const SizedBox(width: 8),
-                Text('(RR vs tempo)',
+                Text('(bpm vs tempo)',
                     style: theme.textTheme.labelSmall?.copyWith(
                       color: theme.colorScheme.outline,
                     )),
@@ -538,28 +538,31 @@ class _TachogramCard extends StatelessWidget {
   Widget _buildChart(ThemeData theme) {
     final scheme = theme.colorScheme;
     final t0 = startedAt.millisecondsSinceEpoch / 1000.0;
+    // Asse Y in bpm (frequenza cardiaca = 60000/RR): stessa informazione degli
+    // RR ma più leggibile e nello stesso verso del respiro (inspiro → sale).
     final spots = [
       for (final r in rr)
         FlSpot(
           r.timestamp.millisecondsSinceEpoch / 1000.0 - t0,
-          r.ms.toDouble(),
+          60000.0 / r.ms,
         ),
     ];
-    final ys = rr.map((r) => r.ms).toList();
+    final ys = rr.map((r) => 60000.0 / r.ms).toList();
     final yMinData = ys.reduce((a, b) => a < b ? a : b);
     final yMaxData = ys.reduce((a, b) => a > b ? a : b);
-    final pad = ((yMaxData - yMinData) * 0.15).clamp(20, 100).toDouble();
+    final pad = ((yMaxData - yMinData) * 0.15).clamp(2, 10).toDouble();
     final yMin = (yMinData - pad).floorToDouble();
     final yMax = (yMaxData + pad).ceilToDouble();
     final xMax = spots.last.x;
 
     // Sovrapposizione respiro guida: campiona pacerAt(pattern, t).amplitude
-    // (0..1) e la mappa nel range Y degli RR così che onda respiratoria e
-    // tachogramma siano confrontabili visivamente. Mirror dell'overlay live di
-    // training_screen.dart:_buildChart. Solo se è esistito un pacer.
-    // Il tachogramma usa minX: 0 (gli RR partono da t0 ≈ inizio sessione):
+    // (0..1) e la mappa nel range Y (in bpm) così che onda respiratoria e
+    // battito siano confrontabili visivamente; con l'asse in bpm la guida è in
+    // fase col segnale (inspiro → in alto → il battito sale). Mirror dell'overlay
+    // live di live_session_view.dart. Solo se è esistito un pacer.
+    // Il grafico usa minX: 0 (i campioni partono da t0 ≈ inizio sessione):
     // campioniamo il pacer sull'intero asse visibile [0, xMax] così che onda e
-    // RR restino allineati anche se il primo battito non è esattamente a 0.
+    // battito restino allineati anche se il primo battito non è esattamente a 0.
     final breathSpots = <FlSpot>[];
     if (_hasPacer) {
       final span = xMax <= 0 ? 1.0 : xMax;
@@ -603,7 +606,7 @@ class _TachogramCard extends StatelessWidget {
         leftTitles: AxisTitles(
           sideTitles: SideTitles(
             showTitles: true,
-            reservedSize: 36,
+            reservedSize: 30,
             interval: yInterval,
             getTitlesWidget: (v, _) => Text(
               v.toStringAsFixed(0),
@@ -671,14 +674,14 @@ class _TachogramCard extends StatelessWidget {
           fitInsideHorizontally: true,
           tooltipMargin: 8,
           getTooltipItems: (spots) => spots.map((s) {
-            // L'onda guida è l'unica serie tratteggiata: nessun tooltip "RR"
-            // su di essa, altrimenti mostrerebbe ms inesistenti.
+            // L'onda guida è l'unica serie tratteggiata: nessun tooltip battito
+            // su di essa, altrimenti mostrerebbe bpm inesistenti.
             if (s.bar.dashArray != null) return null;
             final secs = s.x.toInt();
             final mm = (secs ~/ 60).toString();
             final ss = (secs % 60).toString().padLeft(2, '0');
             return LineTooltipItem(
-              '$mm:$ss\nRR: ${s.y.toStringAsFixed(0)} ms',
+              '$mm:$ss\nBattito: ${s.y.toStringAsFixed(0)} bpm',
               TextStyle(
                 color: scheme.onInverseSurface,
                 fontWeight: FontWeight.w500,
@@ -1352,8 +1355,8 @@ class _SpectrumLegend extends StatelessWidget {
   }
 }
 
-/// Legenda del tachogramma: linea RR + onda guida tratteggiata. Specchio
-/// della legenda live in training_screen.dart.
+/// Legenda del grafico del battito: linea del battito + onda guida tratteggiata.
+/// Specchio della legenda live in live_session_view.dart.
 class _TachoLegend extends StatelessWidget {
   final ColorScheme scheme;
   const _TachoLegend({required this.scheme});
@@ -1365,7 +1368,7 @@ class _TachoLegend extends StatelessWidget {
       children: [
         Container(width: 10, height: 2.5, color: scheme.primary),
         const SizedBox(width: 4),
-        Text('RR', style: textTheme.labelSmall),
+        Text('battito', style: textTheme.labelSmall),
         const SizedBox(width: 14),
         SizedBox(
           width: 14,
