@@ -204,6 +204,11 @@ class HrvTrainerApp extends App.AppBase {
     // === Messaggi dal telefono ============================================
 
     function onPhoneMessage(msg as Comm.PhoneAppMessage) as Void {
+        // Un messaggio malformato o inatteso non deve MAI crashare l'app sul
+        // watch (che costringerebbe a riavviare l'orologio): meglio ignorarlo —
+        // il telefono, se serve, ritrasmette. Così un guasto qui resta
+        // recuperabile dal lato telefono (riavvio app) e non dall'orologio.
+        try {
         var d = msg.data;
         Sys.println("onPhoneMessage data=" + d);
         if (d == null || !(d instanceof Lang.Dictionary)) { return; }
@@ -301,6 +306,9 @@ class HrvTrainerApp extends App.AppBase {
             // esplicito serve come hook documentato e per evitare che
             // futuri filtri "ignora type sconosciuti" scartino il sync.
             Sys.println("onPhoneMessage: SYNC_REQUEST received");
+        }
+        } catch (ex) {
+            Sys.println("onPhoneMessage FAIL " + ex.getErrorMessage());
         }
     }
 
