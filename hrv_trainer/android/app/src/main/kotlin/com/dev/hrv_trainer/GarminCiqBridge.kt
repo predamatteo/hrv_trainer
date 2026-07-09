@@ -359,6 +359,9 @@ internal class RealCiqBackend(
     /** Riga di diagnostica lato nativo verso il log persistente (best-effort). */
     private fun diag(line: String) = CiqDiag.append(context, "native  $line")
 
+    // Handler sul main looper per il fallback temporizzato dello START (vedi start()).
+    private val handler = Handler(Looper.getMainLooper())
+
     override var onEvent: (Map<String, Any?>) -> Unit = {}
 
     private val sdkListener = object : ConnectIQ.ConnectIQListener {
@@ -607,32 +610,41 @@ internal class RealCiqBackend(
         // Sveglia l'app CIQ sul watch se non è già running, poi invia il
         // messaggio. Senza openApplication, sendMessage cade nel vuoto se
         // l'utente non ha aperto l'app HRV Trainer manualmente sull'orologio.
-        try {
-            connectIq.openApplication(dev, iqApp) { _, _, status ->
-                Log.i(GarminCiqBridge.TAG, "openApplication status=${status.name}")
-                diag("openApplication status=${status.name}")
-                // Se l'app risulta già running (status APP_IS_ALREADY_RUNNING)
-                // possiamo aggiornare la finestra anche se non abbiamo ancora
-                // ricevuto un payload questo ciclo: la prossima start() entro
-                // ASSUME_RUNNING_WINDOW_MS skipperà direttamente il prompt.
-                if (status.name == "APP_IS_ALREADY_RUNNING") {
-                    lastWatchActivityMs = System.currentTimeMillis()
-                }
-                // PROMPT_SHOWN_ON_DEVICE / APP_IS_ALREADY_RUNNING / etc.
-                // In tutti i casi tentiamo il send; sarà il watch a ignorare
-                // se non è effettivamente in foreground.
-                val withTxMs = payload.toMutableMap().apply {
-                    put("phoneTxMs", System.currentTimeMillis())
-                }
-                sendToWatch(withTxMs)
-            }
-        } catch (t: Throwable) {
-            Log.e(GarminCiqBridge.TAG, "openApplication failed, provo send diretto", t)
+        // START va inviato dentro il callback di openApplication. Sul campo
+        // (log ciq_diag) si è però visto che a volte quel callback NON scatta:
+        // openApplication tenta comunque il risveglio dell'app sul watch, ma
+        // senza callback il START non partiva mai e la misura falliva in
+        // silenzio (nessun HR_SAMPLE, l'utente annullava). Guardia atomica +
+        // fallback temporizzato: chi arriva primo (callback o timeout) invia una
+        // sola volta. Un eventuale doppio START è gestito dal watch (reset pulito).
+        val startDispatched = java.util.concurrent.atomic.AtomicBoolean(false)
+        fun dispatchStart(reason: String) {
+            if (!startDispatched.compareAndSet(false, true)) return
+            diag("START inviato ($reason)")
             val withTxMs = payload.toMutableMap().apply {
                 put("phoneTxMs", System.currentTimeMillis())
             }
             sendToWatch(withTxMs)
         }
+        try {
+            connectIq.openApplication(dev, iqApp) { _, _, status ->
+                Log.i(GarminCiqBridge.TAG, "openApplication status=${status.name}")
+                diag("openApplication status=${status.name}")
+                // Se l'app risulta già running possiamo aggiornare la finestra
+                // assume-running anche senza aver ancora ricevuto un payload.
+                if (status.name == "APP_IS_ALREADY_RUNNING") {
+                    lastWatchActivityMs = System.currentTimeMillis()
+                }
+                dispatchStart("callback ${status.name}")
+            }
+        } catch (t: Throwable) {
+            Log.e(GarminCiqBridge.TAG, "openApplication failed, provo send diretto", t)
+            dispatchStart("openApplication FAIL")
+        }
+        // Fallback: se il callback non è arrivato entro 3.5s, inviamo comunque
+        // (openApplication ha comunque tentato il risveglio). No-op se il
+        // callback ha già inviato — la guardia atomica evita il doppio invio.
+        handler.postDelayed({ dispatchStart("fallback timeout 3.5s") }, 3500)
     }
 
     override fun stop() {
