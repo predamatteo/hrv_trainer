@@ -263,9 +263,18 @@ class HrSession {
         if (bpm == null || bpm <= 0) { return; }
         var rr = 60000 / bpm;
 
-        mBpmSum += bpm;
-        mBpmCount += 1;
-        mRrList.add(rr);
+        // Bufferizza SOLO nelle sessioni standalone (mIsLocal): quei buffer
+        // servono unicamente a buildSummary. Nelle sessioni phone-driven il
+        // telefono raccoglie tutto in tempo reale e il watch è solo sensore, e
+        // l'HRV on-demand legge da SensorHistory (non da mRrList): accumulare
+        // qui sarebbe memoria sprecata (~1 elemento/battito, ~1200 in 20 min) su
+        // un Instinct 2X già al limite della memoria CIQ (vedi crash "Out Of
+        // Memory / Failed loading application" nel log dell'orologio).
+        if (mIsLocal) {
+            mBpmSum += bpm;
+            mBpmCount += 1;
+            mRrList.add(rr);
+        }
 
         var payload = {
             "type" => "HR_SAMPLE",
