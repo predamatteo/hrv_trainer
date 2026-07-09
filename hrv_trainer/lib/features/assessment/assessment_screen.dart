@@ -38,10 +38,11 @@ class _AssessmentScreenState extends ConsumerState<AssessmentScreen>
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Nessun dato dall\'orologio: assessment annullato. '
-              'Controlla la connessione e riprova.',
+              'L\'orologio non ha inviato dati. Spesso basta riavviare '
+              'l\'orologio (memoria Connect IQ piena) o avvicinarlo e '
+              'controllare il Bluetooth.',
             ),
-            duration: Duration(seconds: 4),
+            duration: Duration(seconds: 6),
           ),
         );
       }

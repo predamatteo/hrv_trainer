@@ -53,10 +53,11 @@ class _MorningCheckInScreenState extends ConsumerState<MorningCheckInScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Nessun dato dall\'orologio: misura annullata. '
-              'Controlla la connessione e riprova.',
+              'L\'orologio non ha inviato dati. Spesso basta riavviare '
+              'l\'orologio (memoria Connect IQ piena) o avvicinarlo e '
+              'controllare il Bluetooth.',
             ),
-            duration: Duration(seconds: 4),
+            duration: Duration(seconds: 6),
           ),
         );
       }
