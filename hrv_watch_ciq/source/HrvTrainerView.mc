@@ -275,8 +275,14 @@ class HrvTrainerView extends Ui.View {
             return false;
         }
         mPhoneLostTicks += 1;
-        // 5 Hz × 60 ≈ 12 s di telefono assente: tollera blip BT brevi.
-        return mPhoneLostTicks >= 60;
+        // 5 Hz × 300 = 60 s di telefono assente prima di abortire. Prima erano
+        // 12 s: troppo nervoso per un link BLE ballerino — un flap di pochi
+        // secondi (visto nei log) uccideva l'intera sessione anche se il BT
+        // tornava subito. Con 60 s il watch CONTINUA a misurare durante un flap
+        // e, quando il BLE torna, lo streaming riprende (al più un piccolo buco
+        // nei dati) invece di dover ricominciare da capo. Se il telefono è
+        // davvero sparito, l'auto-stop a fine durata resta comunque il backstop.
+        return mPhoneLostTicks >= 300;
     }
 
     // Vibrazione breve a inizio fase. Pattern diversi per dare al polso
