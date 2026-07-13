@@ -518,17 +518,24 @@ internal class RealCiqBackend(
                 // message è una List<Any?>; il watch invia un singolo dict.
                 val payload = message?.firstOrNull() as? Map<String, Any?>
                 if (payload != null) {
-                    // Il watch ci sta parlando → app sicuramente in esecuzione.
-                    // Memorizziamo per saltare il prompt "Avviare?" al prossimo start().
-                    lastWatchActivityMs = System.currentTimeMillis()
-                    Log.i(GarminCiqBridge.TAG,
-                        "appEvent payload type=${payload["type"]}")
                     val ptype = payload["type"] as? String
-                    if (ptype != "HR_SAMPLE") {
+                    Log.i(GarminCiqBridge.TAG, "appEvent payload type=$ptype")
+                    // SOLO un HR_SAMPLE (sessione attiva, app in foreground che
+                    // streamma) autorizza a saltare openApplication al prossimo
+                    // start(). Un ack STATE (es. lo stop) NON prova che l'app
+                    // resterà in foreground per il prossimo START: contarlo faceva
+                    // sì che un retry dopo una sessione CADUTA saltasse il
+                    // risveglio e mandasse lo START nel vuoto (log 07-11 sera,
+                    // sessione 2). openApplication invece ristabilisce/conferma il
+                    // canale (APP_IS_ALREADY_RUNNING, senza dialog, se l'app è su).
+                    if (ptype == "HR_SAMPLE") {
+                        lastWatchActivityMs = System.currentTimeMillis()
+                        if (!sawFirstSample) {
+                            sawFirstSample = true
+                            diag("watch -> primo HR_SAMPLE ricevuto (link vivo)")
+                        }
+                    } else {
                         diag("watch -> $ptype")
-                    } else if (!sawFirstSample) {
-                        sawFirstSample = true
-                        diag("watch -> primo HR_SAMPLE ricevuto (link vivo)")
                     }
                     onEvent(payload)
                 } else {
