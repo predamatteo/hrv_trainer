@@ -535,7 +535,8 @@ internal class RealCiqBackend(
                             diag("watch -> primo HR_SAMPLE ricevuto (link vivo)")
                         }
                     } else {
-                        diag("watch -> $ptype")
+                        val mem = payload["mem"]
+                        diag("watch -> $ptype" + if (mem != null) " mem=$mem" else "")
                     }
                     onEvent(payload)
                 } else {
