@@ -103,6 +103,7 @@ class HrvTrainerApp extends App.AppBase {
             "type" => "STATE",
             "v" => "ACTIVE",
             "origin" => "watch",
+            "mem" => memStr(),
         });
         Sys.println("requestStartLocal: done");
     }
@@ -131,7 +132,7 @@ class HrvTrainerApp extends App.AppBase {
             Sys.println("requestStop: already stopped, idempotent ACK");
         }
         // stopped:true + startMs → il phone chiude l'handshake di stop.
-        sendPhone({ "type" => "STATE", "v" => "READY", "stopped" => true, "startMs" => startMs });
+        sendPhone({ "type" => "STATE", "v" => "READY", "stopped" => true, "startMs" => startMs, "mem" => memStr() });
         if (summary != null) {
             // 1) Persistiamo SEMPRE prima di trasmettere: se BT è giù,
             //    Comm.transmit fallisce ma il summary resta in Storage e
@@ -279,7 +280,7 @@ class HrvTrainerApp extends App.AppBase {
             } else {
                 Sys.println("onPhoneMessage: mView NULL on START_SESSION");
             }
-            sendPhone({ "type" => "STATE", "v" => "ACTIVE" });
+            sendPhone({ "type" => "STATE", "v" => "ACTIVE", "mem" => memStr() });
         } else if (type.equals("STOP_SESSION")) {
             requestStop();
         } else if (type.equals("REQUEST_HRV")) {
@@ -333,6 +334,18 @@ class HrvTrainerApp extends App.AppBase {
     }
 
     // === Trasmissione al telefono =========================================
+
+    // Diagnostica memoria: usata/totale in KB sui 96 KB dell'app CIQ. Inclusa
+    // nelle STATE per capire quanto siamo vicini al limite (OOM su firmware 17.11).
+    static function memStr() {
+        try {
+            var s = Sys.getSystemStats();
+            return (s.usedMemory / 1024).toString() + "/"
+                + (s.totalMemory / 1024).toString() + "KB";
+        } catch (ex) {
+            return "?";
+        }
+    }
 
     static function sendPhone(payload) {
         // Comm.transmit dovrebbe essere asincrono ma su alcuni firmware
