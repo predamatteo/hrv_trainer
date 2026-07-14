@@ -11,14 +11,14 @@ class HrvTrainerApp extends App.AppBase {
     var mView;
     var mSession;
 
-    // I default per la sessione standalone (durata + pacer) vivono in
-    // SessionPrefs.mc. Sono modificabili dall'utente attraverso il pannello
-    // CONFIG sul watch (GPS dalla schermata idle).
+    // Le sessioni standalone si avviano dal menu di scelta sessione (GPS dalla
+    // schermata idle): 7 preset clinici (SessionPresets, pacer fisso + durata
+    // modificabile) oppure "Libero" (inspira/espira/durata da zero, persistiti
+    // in SessionPrefs.mc). La View passa pacer + durata a requestStartLocal.
     //
-    // NB: le sessioni phone-driven (START_SESSION via BT) NON leggono da
-    // SessionPrefs: continuano a usare i parametri inviati dal telefono.
-    // Quindi modificare la config sul watch non influisce in alcun modo
-    // sull'esperienza con l'app mobile.
+    // NB: le sessioni phone-driven (START_SESSION via BT) NON leggono nulla di
+    // tutto ciò: usano i parametri inviati dal telefono. Quindi la config sul
+    // watch non influisce in alcun modo sull'esperienza con l'app mobile.
 
     // FIT recording: se true, ogni sessione locale produce un'attività
     // "Breathwork" in Garmin Connect. Default false per evitare di
@@ -64,19 +64,16 @@ class HrvTrainerApp extends App.AppBase {
 
     // === Avvio/stop locali (chiamati da delegate o auto-stop del view) =====
 
-    function requestStartLocal() {
+    // Avvia una sessione standalone col pacer + durata scelti dalla View
+    // (dal menu preset o da Libero). La View è l'unica fonte di questi valori:
+    // per i preset viene passato il pacer clinico fisso, per Libero i valori
+    // impostati dall'utente (già persistiti in SessionPrefs dalla View).
+    function requestStartLocal(inhaleMs, hold1Ms, exhaleMs, hold2Ms, durSec) {
         Sys.println("requestStartLocal: enter");
         if (mSession.isActive()) {
             Sys.println("requestStartLocal: already active, exit");
             return;
         }
-        // Legge config corrente. Se l'utente non ha mai aperto il pannello,
-        // SessionPrefs ritorna i propri DEFAULT_* (5 min @ 4s/6s, no hold).
-        var inhaleMs = SessionPrefs.getInhaleMs();
-        var exhaleMs = SessionPrefs.getExhaleMs();
-        var hold1Ms  = SessionPrefs.getHold1Ms();
-        var hold2Ms  = SessionPrefs.getHold2Ms();
-        var durSec   = SessionPrefs.getDurationSec();
         var pacer = new PacerInfo(inhaleMs, hold1Ms, exhaleMs, hold2Ms);
         Sys.println("requestStartLocal: pacer ready dur=" + durSec
             + " in=" + inhaleMs + " ex=" + exhaleMs);

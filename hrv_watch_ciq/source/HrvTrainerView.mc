@@ -58,28 +58,47 @@ class HrvTrainerView extends Ui.View {
 
     // === Stato pannello config (SCREEN_CONFIG) ===
     //
-    // Carosello a una pagina per volta: indispensabile sull'Instinct perché
-    // il sub-display circolare in alto a destra (~x=102..168, y=2..68)
-    // nasconderebbe i valori di una lista renderizzata a destra. Mostriamo
-    // un solo parametro alla volta, valore grande centrato in zona safe
-    // (y > 68), MENU/ABC modifica direttamente, GPS avanza al successivo.
+    // Due modalità, scelte dal menu di selezione sessione (PresetMenu):
+    //  - CFG_MODE_PRESET → è stato scelto un preset clinico (SessionPresets):
+    //    il pacer è FISSO, l'utente modifica SOLO la durata. Schermata singola.
+    //  - CFG_MODE_LIBERO → "Libero": carosello a una pagina per volta per
+    //    impostare da zero inspira, espira e durata, poi Avvia.
     //
-    // Pagine: 0=Durata, 1=Inspira, 2=Espira, 3=Avvia.
+    // Il carosello a una pagina per volta è indispensabile sull'Instinct
+    // perché il sub-display circolare in alto a destra (~x=102..168, y=2..68)
+    // nasconderebbe i valori di una lista renderizzata a destra. Mostriamo un
+    // solo parametro alla volta, valore grande centrato in zona safe (y > 68),
+    // MENU/ABC modifica direttamente, GPS avanza al successivo.
+    //
+    // Pagine Libero: 0=Inspira, 1=Espira, 2=Durata, 3=Avvia (stesso ordine in
+    // cui l'utente pensa un respiro custom sull'app telefono).
     //
     // Hold1 (trattieni a polmoni pieni) e Hold2 (pausa a polmoni vuoti)
-    // NON sono esposti qui: l'app phone non li espone (usa sempre il
-    // pattern di risonanza 4/6 senza hold), e il training HRV stile
-    // Lehrer-Gevirtz prevede respirazione sinusoidale fluida senza pause.
-    // Il protocollo end-to-end (PacerInfo, START_SESSION, SESSION_SUMMARY)
-    // li supporta comunque, così se in futuro la phone vorrà aggiungerli
-    // sarà sufficiente esporli lì.
-    static const CFG_PAGE_DURATION = 0;
-    static const CFG_PAGE_INHALE   = 1;
-    static const CFG_PAGE_EXHALE   = 2;
+    // NON sono esposti: né i preset né l'app phone li usano (respiro di
+    // risonanza sinusoidale fluido senza pause, stile Lehrer-Gevirtz). Il
+    // protocollo end-to-end (PacerInfo, START_SESSION, SESSION_SUMMARY) li
+    // supporta comunque, così se in futuro servissero basterà esporli.
+    static const CFG_MODE_PRESET = 0;
+    static const CFG_MODE_LIBERO = 1;
+    hidden var mConfigMode;
+    hidden var mPresetIdx;   // indice preset in CFG_MODE_PRESET (label)
+
+    static const CFG_PAGE_INHALE   = 0;
+    static const CFG_PAGE_EXHALE   = 1;
+    static const CFG_PAGE_DURATION = 2;
     static const CFG_PAGE_START    = 3;
     static const CFG_PAGE_COUNT    = 4;
 
     hidden var mPageIdx;
+
+    // Working copy della config in editing. Non tocca SessionPrefs finché
+    // l'utente avvia — e solo in modalità Libero (i preset non persistono, così
+    // non "sporcano" i valori Libero ricordati). Valori in ms (pacer) / sec.
+    hidden var mCfgInhaleMs;
+    hidden var mCfgExhaleMs;
+    hidden var mCfgHold1Ms;
+    hidden var mCfgHold2Ms;
+    hidden var mCfgDurSec;
 
     function initialize() {
         View.initialize();
@@ -95,6 +114,13 @@ class HrvTrainerView extends Ui.View {
         mTicker = null;
         mPageIdx = 0;
         mPhoneLostTicks = 0;
+        mConfigMode = CFG_MODE_LIBERO;
+        mPresetIdx = 0;
+        mCfgInhaleMs = SessionPrefs.DEFAULT_INHALE;
+        mCfgExhaleMs = SessionPrefs.DEFAULT_EXHALE;
+        mCfgHold1Ms = 0;
+        mCfgHold2Ms = 0;
+        mCfgDurSec = SessionPrefs.DEFAULT_DUR_SEC;
     }
 
     // === API per HrvTrainerApp =============================================
@@ -136,13 +162,36 @@ class HrvTrainerView extends Ui.View {
         Ui.requestUpdate();
     }
 
-    // Ingresso pannello config: ammesso solo da IDLE. Se la sessione è
-    // attiva l'azione viene ignorata (il delegate non dovrebbe chiamarci
-    // in quel caso, ma è una guardia di sicurezza).
-    function enterConfig() {
+    // Ingresso config da un preset clinico (dal PresetMenu). Ammesso solo da
+    // IDLE. Carica il pacer FISSO del preset + la sua durata di default nella
+    // working copy; l'utente potrà poi modificare solo la durata.
+    function enterPresetConfig(i) {
         if (mScreen != SCREEN_IDLE) { return; }
+        mConfigMode = CFG_MODE_PRESET;
+        mPresetIdx = i;
+        mCfgInhaleMs = SessionPresets.inhaleMs(i);
+        mCfgExhaleMs = SessionPresets.exhaleMs(i);
+        mCfgHold1Ms = 0;
+        mCfgHold2Ms = 0;
+        mCfgDurSec = SessionPresets.durationSec(i);
         mScreen = SCREEN_CONFIG;
+        Ui.requestUpdate();
+    }
+
+    // Ingresso config "Libero" (dal PresetMenu). Ammesso solo da IDLE. Carica
+    // gli ultimi valori Libero da SessionPrefs (default = 4s/6s/5min), così la
+    // prima volta parte dalla risonanza standard e in seguito ricorda le tue
+    // modifiche.
+    function enterLiberoConfig() {
+        if (mScreen != SCREEN_IDLE) { return; }
+        mConfigMode = CFG_MODE_LIBERO;
+        mCfgInhaleMs = SessionPrefs.getInhaleMs();
+        mCfgExhaleMs = SessionPrefs.getExhaleMs();
+        mCfgHold1Ms = SessionPrefs.getHold1Ms();
+        mCfgHold2Ms = SessionPrefs.getHold2Ms();
+        mCfgDurSec = SessionPrefs.getDurationSec();
         mPageIdx = 0;
+        mScreen = SCREEN_CONFIG;
         Ui.requestUpdate();
     }
 
@@ -164,8 +213,14 @@ class HrvTrainerView extends Ui.View {
     // (sec o ms) è fatta da adjustValueForPage().
     function configNudge(delta) {
         if (mScreen != SCREEN_CONFIG) { return; }
-        if (mPageIdx == CFG_PAGE_START) { return; }
-        adjustValueForPage(mPageIdx, delta);
+        if (mConfigMode == CFG_MODE_PRESET) {
+            // Preset: MENU/ABC modifica SOLO la durata.
+            adjustDuration(delta);
+        } else {
+            // Libero: modifica il parametro della pagina corrente (Avvia esclusa).
+            if (mPageIdx == CFG_PAGE_START) { return; }
+            adjustLiberoPage(mPageIdx, delta);
+        }
         Ui.requestUpdate();
     }
 
@@ -174,15 +229,33 @@ class HrvTrainerView extends Ui.View {
     //  - sulla pagina "Avvia" → start sessione standalone
     function configSelect() {
         if (mScreen != SCREEN_CONFIG) { return; }
+        // Preset: GPS avvia direttamente (schermata singola, nessuna pagina).
+        if (mConfigMode == CFG_MODE_PRESET) {
+            startFromConfig();
+            return;
+        }
+        // Libero: sull'ultima pagina (Avvia) parte, altrimenti avanza.
         if (mPageIdx == CFG_PAGE_START) {
-            // requestStartLocal() leggerà SessionPrefs e chiamerà
-            // view.startSession() che porta mScreen a SCREEN_ACTIVE.
-            App.getApp().requestStartLocal();
+            startFromConfig();
             return;
         }
         mPageIdx = mPageIdx + 1;
         if (mPageIdx >= CFG_PAGE_COUNT) { mPageIdx = 0; }
         Ui.requestUpdate();
+    }
+
+    // Avvia la sessione standalone con la working copy corrente. In Libero
+    // persiste prima i valori in SessionPrefs (così il prossimo "Libero"
+    // riparte da qui); i preset non persistono. requestStartLocal chiama
+    // view.startSession() che porta mScreen a SCREEN_ACTIVE.
+    hidden function startFromConfig() {
+        if (mConfigMode == CFG_MODE_LIBERO) {
+            SessionPrefs.setInhaleMs(mCfgInhaleMs);
+            SessionPrefs.setExhaleMs(mCfgExhaleMs);
+            SessionPrefs.setDurationSec(mCfgDurSec);
+        }
+        App.getApp().requestStartLocal(
+            mCfgInhaleMs, mCfgHold1Ms, mCfgExhaleMs, mCfgHold2Ms, mCfgDurSec);
     }
 
     // LIGHT (tasto CTRL su Instinct) nel pannello config: pagina precedente.
@@ -191,6 +264,7 @@ class HrvTrainerView extends Ui.View {
     // soft, l'utente può comunque scorrere in avanti con GPS.
     function configPrevPage() {
         if (mScreen != SCREEN_CONFIG) { return; }
+        if (mConfigMode != CFG_MODE_LIBERO) { return; } // preset: nessuna pagina
         var p = mPageIdx - 1;
         if (p < 0) { p = CFG_PAGE_COUNT - 1; }
         mPageIdx = p;
@@ -338,24 +412,14 @@ class HrvTrainerView extends Ui.View {
         dc.drawText(cx, 72, Gfx.FONT_MEDIUM,
             "HRV Trainer",
             Gfx.TEXT_JUSTIFY_CENTER);
-        dc.drawText(cx, 100, Gfx.FONT_SMALL,
-            "Ready", Gfx.TEXT_JUSTIFY_CENTER);
+        dc.drawText(cx, 104, Gfx.FONT_SMALL,
+            "Pronto", Gfx.TEXT_JUSTIFY_CENTER);
 
-        // Mostra config corrente così l'utente sa cosa partirà.
-        var durSec = SessionPrefs.getDurationSec();
-        var rate   = computeBreathsPerMin(
-            SessionPrefs.getInhaleMs(),
-            SessionPrefs.getExhaleMs(),
-            SessionPrefs.getHold1Ms(),
-            SessionPrefs.getHold2Ms());
-        var line1 = (durSec / 60).toString() + " min @ "
-            + rate.format("%.1f") + "/min";
-        dc.drawText(cx, 124, Gfx.FONT_XTINY,
-            line1, Gfx.TEXT_JUSTIFY_CENTER);
-
-        dc.drawText(cx, 144, Gfx.FONT_XTINY,
-            "GPS: config", Gfx.TEXT_JUSTIFY_CENTER);
-        dc.drawText(cx, 160, Gfx.FONT_XTINY,
+        // La config non è più mostrata qui: la sessione si sceglie ogni volta
+        // dal menu (GPS) — un preset clinico oppure Libero.
+        dc.drawText(cx, 136, Gfx.FONT_XTINY,
+            "GPS: scegli sessione", Gfx.TEXT_JUSTIFY_CENTER);
+        dc.drawText(cx, 152, Gfx.FONT_XTINY,
             "SET: esci", Gfx.TEXT_JUSTIFY_CENTER);
     }
 
@@ -383,7 +447,12 @@ class HrvTrainerView extends Ui.View {
     hidden function drawConfig(dc, w, h) {
         var cx = w / 2;
 
-        // Page indicator (dentro safe zone perché molto stretto e centrato).
+        if (mConfigMode == CFG_MODE_PRESET) {
+            drawPresetConfig(dc, w, h, cx);
+            return;
+        }
+
+        // Libero: page indicator (dentro safe zone perché stretto e centrato).
         var pageStr = (mPageIdx + 1).toString() + "/"
                     + CFG_PAGE_COUNT.toString();
         dc.drawText(cx, 8, Gfx.FONT_XTINY,
@@ -394,6 +463,26 @@ class HrvTrainerView extends Ui.View {
         } else {
             drawConfigParamPage(dc, w, h, cx);
         }
+    }
+
+    // ----- CONFIG preset (schermata singola) ------------------------------
+    //
+    // Nome preset + durata grande modificabile + hint. Geometria identica a
+    // drawConfigParamPage (label@60 / valore@90 / 3 hint), già validata a
+    // schermo per evitare il sub-display. Il ritmo è fisso: solo la durata si
+    // modifica con MENU/ABC; GPS avvia.
+    hidden function drawPresetConfig(dc, w, h, cx) {
+        dc.drawText(cx, 60, Gfx.FONT_SMALL,
+            SessionPresets.label(mPresetIdx), Gfx.TEXT_JUSTIFY_CENTER);
+        dc.drawText(cx, 90, Gfx.FONT_NUMBER_MEDIUM,
+            (mCfgDurSec / 60).toString() + " min", Gfx.TEXT_JUSTIFY_CENTER);
+
+        dc.drawText(cx, h - 50, Gfx.FONT_XTINY,
+            "MENU = +    ABC = -", Gfx.TEXT_JUSTIFY_CENTER);
+        dc.drawText(cx, h - 34, Gfx.FONT_XTINY,
+            "GPS: avvia", Gfx.TEXT_JUSTIFY_CENTER);
+        dc.drawText(cx, h - 18, Gfx.FONT_XTINY,
+            "SET: indietro", Gfx.TEXT_JUSTIFY_CENTER);
     }
 
     hidden function drawConfigParamPage(dc, w, h, cx) {
@@ -424,12 +513,10 @@ class HrvTrainerView extends Ui.View {
         dc.drawText(cx, 60, Gfx.FONT_SMALL,
             "Pronto?", Gfx.TEXT_JUSTIFY_CENTER);
 
-        // Riepilogo della config corrente (durata + freq respiri).
-        var inMs   = SessionPrefs.getInhaleMs();
-        var exMs   = SessionPrefs.getExhaleMs();
-        var rate   = computeBreathsPerMin(inMs, exMs,
-            SessionPrefs.getHold1Ms(), SessionPrefs.getHold2Ms());
-        var durMin = SessionPrefs.getDurationSec() / 60;
+        // Riepilogo della config in editing (durata + freq respiri).
+        var rate   = computeBreathsPerMin(mCfgInhaleMs, mCfgExhaleMs,
+            mCfgHold1Ms, mCfgHold2Ms);
+        var durMin = mCfgDurSec / 60;
         var summary = durMin.toString() + " min @ "
                     + rate.format("%.1f") + "/min";
         dc.drawText(cx, 88, Gfx.FONT_XTINY,
@@ -454,10 +541,10 @@ class HrvTrainerView extends Ui.View {
 
     hidden function valueForPage(i) {
         if (i == CFG_PAGE_DURATION) {
-            return (SessionPrefs.getDurationSec() / 60).toString() + " min";
+            return (mCfgDurSec / 60).toString() + " min";
         }
-        if (i == CFG_PAGE_INHALE) { return formatSec(SessionPrefs.getInhaleMs()); }
-        if (i == CFG_PAGE_EXHALE) { return formatSec(SessionPrefs.getExhaleMs()); }
+        if (i == CFG_PAGE_INHALE) { return formatSec(mCfgInhaleMs); }
+        if (i == CFG_PAGE_EXHALE) { return formatSec(mCfgExhaleMs); }
         return "";
     }
 
@@ -465,24 +552,34 @@ class HrvTrainerView extends Ui.View {
         return (ms / 1000.0).format("%.1f") + " s";
     }
 
-    // Modifica il parametro della pagina indicata di +/- 1 step. Persistito
-    // subito in SessionPrefs (clamp dentro al setter), così l'uscita non
-    // perde mai la modifica.
-    hidden function adjustValueForPage(page, direction) {
-        if (page == CFG_PAGE_DURATION) {
-            var v = SessionPrefs.getDurationSec()
-                  + direction * SessionPrefs.DUR_STEP_SEC;
-            SessionPrefs.setDurationSec(v);
-        } else if (page == CFG_PAGE_INHALE) {
-            var v = SessionPrefs.getInhaleMs()
-                  + direction * SessionPrefs.PHASE_STEP_MS;
-            SessionPrefs.setInhaleMs(v);
+    // Modifica la durata (working copy) di ±1 step, clampata al range
+    // SessionPrefs. Usata sia dai preset sia dalla pagina Durata di Libero.
+    hidden function adjustDuration(direction) {
+        var v = mCfgDurSec + direction * SessionPrefs.DUR_STEP_SEC;
+        if (v < SessionPrefs.DUR_MIN_SEC) { v = SessionPrefs.DUR_MIN_SEC; }
+        if (v > SessionPrefs.DUR_MAX_SEC) { v = SessionPrefs.DUR_MAX_SEC; }
+        mCfgDurSec = v;
+    }
+
+    // Modifica il parametro della pagina Libero indicata di ±1 step (working
+    // copy). Persistito in SessionPrefs solo all'avvio (startFromConfig).
+    hidden function adjustLiberoPage(page, direction) {
+        if (page == CFG_PAGE_INHALE) {
+            mCfgInhaleMs = clampPhase(
+                mCfgInhaleMs + direction * SessionPrefs.PHASE_STEP_MS);
         } else if (page == CFG_PAGE_EXHALE) {
-            var v = SessionPrefs.getExhaleMs()
-                  + direction * SessionPrefs.PHASE_STEP_MS;
-            SessionPrefs.setExhaleMs(v);
+            mCfgExhaleMs = clampPhase(
+                mCfgExhaleMs + direction * SessionPrefs.PHASE_STEP_MS);
+        } else if (page == CFG_PAGE_DURATION) {
+            adjustDuration(direction);
         }
         // CFG_PAGE_START: nulla da modificare (filtrato dal caller).
+    }
+
+    hidden function clampPhase(ms) {
+        if (ms < SessionPrefs.PHASE_MIN_MS) { return SessionPrefs.PHASE_MIN_MS; }
+        if (ms > SessionPrefs.PHASE_MAX_MS) { return SessionPrefs.PHASE_MAX_MS; }
+        return ms;
     }
 
     // ----- ACTIVE ---------------------------------------------------------
@@ -553,20 +650,23 @@ class HrvTrainerView extends Ui.View {
 // SET→onBack, CTRL→onKey(KEY_LIGHT).
 //
 //  IDLE:
-//    GPS  → entra in pannello CONFIG (pagina 1: Durata)
+//    GPS  → apre il menu di scelta sessione (7 preset clinici + Libero)
 //    SET  → esce dall'app
-//  CONFIG (pagina parametro):
-//    MENU → +1 step del parametro corrente (es. +1 min per Durata)
+//  CONFIG preset (schermata durata, dopo aver scelto un preset):
+//    MENU → +1 min di durata
+//    ABC  → -1 min di durata
+//    GPS  → avvia la sessione col pacer FISSO del preset + durata scelta
+//    SET  → torna a IDLE
+//  CONFIG Libero (pagina parametro: Inspira/Espira/Durata):
+//    MENU → +1 step del parametro corrente
 //    ABC  → -1 step
 //    GPS  → avanza alla pagina successiva
 //    CTRL → torna alla pagina precedente (best-effort: l'OS Garmin spesso
 //           intercetta il tasto per aprire i Controls; se non arriva
 //           all'app è ok, l'utente può scorrere in avanti col GPS)
-//    SET  → esce a IDLE (i valori sono già salvati in SessionPrefs ad ogni
-//           nudge, quindi nessuna perdita)
-//  CONFIG (pagina "Avvia"):
-//    GPS  → avvia sessione standalone (requestStartLocal legge SessionPrefs
-//           e chiama view.startSession)
+//    SET  → esce a IDLE (i valori Libero vengono persistiti all'avvio)
+//  CONFIG Libero (pagina "Avvia"):
+//    GPS  → avvia sessione standalone con la config Libero impostata
 //    CTRL → torna a pagina parametro precedente
 //    SET  → esce a IDLE
 //  ACTIVE:
@@ -588,8 +688,9 @@ class HrvTrainerDelegate extends Ui.BehaviorDelegate {
             view.configSelect();
             return true;
         }
-        // Idle: apri il pannello config.
-        if (view != null) { view.enterConfig(); }
+        // Idle: apri il menu di scelta sessione (7 preset + Libero). Il menu è
+        // costruito on-demand e rilasciato alla selezione (vedi PresetMenu).
+        Ui.pushView(PresetMenu.build(), new PresetMenuDelegate(), Ui.SLIDE_LEFT);
         return true;
     }
 
